@@ -1,0 +1,45 @@
+/* 模擬資料頁（只在此頁使用的樣式） */
+.mock-page {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  min-width: 0;
+}
+.mock-page .page-header {
+  margin-bottom: 0;
+}
+
+/* 7 張統計卡：寬螢幕一列排滿，手機寬度兩欄 */
+.mock-stats {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(130px, 1fr));
+  gap: 12px;
+}
+.mock-stats .stat {
+  min-width: 0;
+}
+
+.mock-seeded {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 2px;
+  margin-top: -4px;
+}
+
+.mock-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  min-width: 120px;
+}
+
+.mock-summary {
+  min-width: 240px;
+  overflow-wrap: anywhere;
+}
+
+.mock-note {
+  padding: 10px 16px;
+  border-top: 1px solid var(--border);
+}

@@ -1,0 +1,105 @@
+/* 社群帳號頁（只在此頁使用的樣式） */
+.acc-page {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  min-width: 0;
+}
+.acc-page .toolbar {
+  margin-bottom: 0;
+}
+
+.acc-form .field + .field {
+  margin-top: 0;
+}
+
+.acc-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  min-width: 170px;
+  max-width: 240px;
+}
+.badge.acc-chip-off {
+  background: transparent;
+  color: var(--muted);
+  border: 1px dashed var(--border-strong);
+  text-decoration: line-through;
+  cursor: help;
+}
+
+.acc-name {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 140px;
+}
+.acc-type {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  white-space: nowrap;
+}
+.acc-status {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  white-space: nowrap;
+}
+
+.acc-preview {
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.acc-preview-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.acc-preview-row > .acc-preview-label {
+  flex: none;
+  width: 72px;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 22px;
+}
+.acc-preview-row .acc-chips {
+  max-width: none;
+  min-width: 0;
+}
+
+.acc-readonly {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding: 10px 12px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+
+.acc-platforms {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 12px;
+}
+.acc-platforms li {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}

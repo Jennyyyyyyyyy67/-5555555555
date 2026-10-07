@@ -1,0 +1,210 @@
+/* 收件匣（階段 1 預覽）只在此頁使用的樣式 */
+.inbox-page {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.inbox-title {
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.inbox-toolbar .inbox-search {
+  flex: 1 1 220px;
+  max-width: 360px;
+}
+.inbox-total {
+  margin-left: auto;
+  white-space: nowrap;
+}
+
+/* ---------- 列表：寬版為表格式欄位，窄版（容器寬度 ≤ 760px）改為堆疊卡片 ---------- */
+.inbox-card {
+  container-type: inline-size;
+  container-name: inbox;
+  overflow: hidden;
+}
+.inbox-list-wrap {
+  transition: opacity 0.15s;
+}
+.inbox-list-wrap.is-refreshing {
+  opacity: 0.6;
+}
+.inbox-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.inbox-head,
+.inbox-row {
+  display: grid;
+  grid-template-columns: 104px minmax(150px, 210px) minmax(200px, 1fr) minmax(100px, 140px) minmax(104px, 132px);
+  gap: 12px;
+  padding: 10px 16px;
+}
+.inbox-head {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--muted);
+  background: var(--surface-2);
+  border-bottom: 1px solid var(--border);
+}
+.inbox-row {
+  border-bottom: 1px solid var(--border);
+  align-items: start;
+}
+.inbox-row:hover {
+  background: #fafbfc;
+}
+.inbox-row > * {
+  min-width: 0;
+}
+
+.ib-meta,
+.ib-source,
+.ib-state,
+.ib-assign,
+.ib-cat {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  min-width: 0;
+}
+.ib-time {
+  font-variant-numeric: tabular-nums;
+  color: var(--text-2);
+  white-space: nowrap;
+}
+.ib-meta .brand-tag {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-size: 13px;
+}
+
+.ib-account,
+.ib-post {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  max-width: 100%;
+}
+.ib-account {
+  font-weight: 500;
+}
+.ib-post {
+  font-size: 13px;
+}
+.ib-post .badge {
+  flex: none;
+}
+
+.ib-author {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.ib-stars {
+  color: var(--warning);
+  letter-spacing: 1px;
+  white-space: nowrap;
+  font-size: 13px;
+}
+.ib-body {
+  margin-top: 2px;
+  color: var(--text-2);
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+}
+
+.ib-cat-name {
+  overflow-wrap: anywhere;
+}
+.ib-assign {
+  gap: 2px;
+  font-size: 13px;
+  max-width: 100%;
+}
+.ib-sla {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--warning-text);
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+.inbox-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 10px 16px;
+}
+
+/* ---------- 窄版：堆疊卡片 ---------- */
+@container inbox (max-width: 760px) {
+  .inbox-head {
+    display: none;
+  }
+  .inbox-row {
+    grid-template-columns: minmax(0, 1fr) fit-content(50%);
+    grid-template-areas:
+      'meta status'
+      'source source'
+      'comment comment'
+      'cat assign';
+    gap: 8px 12px;
+    padding: 12px 14px;
+  }
+  .ib-meta {
+    grid-area: meta;
+    flex-direction: row;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 2px 8px;
+  }
+  .ib-state {
+    display: contents;
+  }
+  .ib-status {
+    grid-area: status;
+    justify-self: end;
+  }
+  .ib-source {
+    grid-area: source;
+    flex-direction: row;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 4px 10px;
+  }
+  .ib-comment {
+    grid-area: comment;
+  }
+  .ib-cat {
+    grid-area: cat;
+    flex-direction: row;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px;
+  }
+  .ib-assign {
+    grid-area: assign;
+    flex-direction: row;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 4px 10px;
+  }
+}

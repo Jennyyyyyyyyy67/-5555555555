@@ -16,18 +16,13 @@ import {
   ErrorMessage,
   Loading,
   PageHeader,
+  STATUS_TONE,
   type BadgeTone,
 } from '../../components/ui';
 import { BrandTag, IconRefresh, PlatformIcon } from '../../components/icons';
 import { ACTOR_TYPE_LABELS, COMMENT_STATUSES, STATUS_LABELS } from '../../../../shared/constants';
-import type { AuditLogEntry, MeResponse, MockStatsResponse } from '../../../../shared/types';
+import type { AuditLogEntry, MockResetResponse, MockStatsResponse } from '../../../../shared/types';
 import './mock.css';
-
-/** POST /api/mock/reset 的回應；me 為 null 代表目前帳號不在新的示範資料中，已被登出 */
-interface MockResetResponse {
-  summary: Record<string, number>;
-  me: MeResponse | null;
-}
 
 /** 示範留言的時間以建立當下推算，超過這個時間就建議重設 */
 const STALE_AFTER_MS = 3 * 60 * 60_000;
@@ -180,7 +175,7 @@ export default function MockDataPage() {
                             ) : (
                               <span className="mock-chips">
                                 {statuses.map((s) => (
-                                  <Badge key={s}>
+                                  <Badge key={s} tone={STATUS_TONE[s]}>
                                     {STATUS_LABELS[s]} {formatNumber(b.byStatus[s] ?? 0)}
                                   </Badge>
                                 ))}

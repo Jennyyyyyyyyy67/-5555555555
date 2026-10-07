@@ -25,4 +25,4 @@ export function verifyPassword(password: string, stored: string): boolean {
   return actual.length === expected.length && timingSafeEqual(actual, expected);
 }
 
-export const PASSWORD_MIN_LENGTH = 8;
+export { PASSWORD_MIN_LENGTH } from '../../shared/constants';

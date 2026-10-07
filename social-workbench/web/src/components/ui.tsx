@@ -14,6 +14,7 @@ import {
 import { createPortal } from 'react-dom';
 import { errorMessage } from '../lib/api';
 import { IconX } from './icons';
+import type { CommentStatus, Priority } from '../../../shared/constants';
 
 // ---------- 按鈕 ----------
 type ButtonVariant = 'primary' | 'secondary' | 'ghost' | 'danger';
@@ -43,6 +44,17 @@ export const Button = forwardRef<HTMLButtonElement, ButtonProps>(function Button
 
 // ---------- 標籤 ----------
 export type BadgeTone = 'gray' | 'blue' | 'green' | 'orange' | 'red' | 'purple' | 'teal' | 'solid-red' | 'solid-orange';
+/** 留言處理狀態與優先順序的標籤顏色（各頁面共用，維持一致） */
+export const STATUS_TONE: Record<CommentStatus, BadgeTone> = {
+  pending: 'blue',
+  in_progress: 'purple',
+  waiting: 'teal',
+  transferred: 'orange',
+  no_action: 'gray',
+  done: 'green',
+};
+export const PRIORITY_TONE: Record<Priority, BadgeTone> = { high: 'red', medium: 'orange', low: 'gray' };
+
 export function Badge({ tone = 'gray', children, title }: { tone?: BadgeTone; children: ReactNode; title?: string }) {
   return (
     <span className={`badge ${tone === 'gray' ? '' : `badge-${tone}`}`} title={title}>

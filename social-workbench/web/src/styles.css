@@ -101,6 +101,9 @@ textarea {
   position: absolute;
   width: 1px;
   height: 1px;
+  margin: -1px;
+  padding: 0;
+  border: 0;
   overflow: hidden;
   clip: rect(0 0 0 0);
   white-space: nowrap;
@@ -200,6 +203,33 @@ textarea {
 .topbar .spacer {
   flex: 1;
 }
+/* 品牌切換器與帳號選單在窄螢幕時要能縮小，避免頂部列把整頁撐出水平捲動 */
+.topbar .topbar-brand {
+  width: auto;
+  max-width: 220px;
+  min-width: 0;
+  flex: 0 1 auto;
+}
+.topbar .menu-wrap {
+  flex-shrink: 0;
+}
+@media (max-width: 640px) {
+  .topbar {
+    gap: 8px;
+  }
+  .topbar .topbar-user {
+    padding-left: 6px;
+    padding-right: 6px;
+  }
+  .topbar-user-role {
+    display: none;
+  }
+  .topbar-user-name {
+    max-width: 5.5em;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+}
 .menu-toggle {
   display: none;
 }
@@ -226,10 +256,10 @@ textarea {
     width: 260px;
     transform: translateX(-100%);
     transition: transform 0.2s ease;
-    box-shadow: var(--shadow-lg);
   }
   .shell.nav-open .sidebar {
     transform: none;
+    box-shadow: var(--shadow-lg);
   }
   .shell.nav-open .sidebar-backdrop {
     display: block;
@@ -605,6 +635,8 @@ textarea {
 
 /* ---------- 表格 ---------- */
 .table-wrap {
+  /* relative：讓表格內絕對定位的元素（例如 .sr-only 輔助文字）留在捲動區內，不會把整頁撐出水平捲動 */
+  position: relative;
   width: 100%;
   overflow-x: auto;
   -webkit-overflow-scrolling: touch;

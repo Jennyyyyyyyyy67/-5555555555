@@ -139,6 +139,18 @@ export const INTERACTION_ACTION_LABELS: Record<InteractionAction, string> = {
 /** 高風險動作：一律需要人工確認並填寫理由，自動化規則不可執行 */
 export const HIGH_RISK_ACTIONS: InteractionAction[] = ['delete', 'block'];
 
+// ---- 平台能力（各帳號類型的 API 支援哪些動作；PlatformCapabilities 的欄位） ----
+export const CAPABILITIES = ['reply', 'like', 'hide', 'delete', 'block'] as const;
+export type Capability = (typeof CAPABILITIES)[number];
+/** 「支援動作」標籤用的短名稱 */
+export const CAPABILITY_LABELS: Record<Capability, string> = {
+  reply: '回覆',
+  like: '按讚',
+  hide: '隱藏',
+  delete: '刪除',
+  block: '封鎖',
+};
+
 // ---- 回覆來源 ----
 export const REPLY_SOURCES = ['manual', 'ai_adopted', 'ai_edited', 'canned', 'auto_rule', 'batch'] as const;
 export type ReplySource = (typeof REPLY_SOURCES)[number];
@@ -276,3 +288,5 @@ export const DEFAULT_CATEGORIES: DefaultCategory[] = [
 export const DEFAULT_NEAR_DUE_MINUTES = 15;
 /** 處理中鎖定的有效時間（分鐘），無動作即自動釋放 */
 export const LOCK_TTL_MINUTES = 10;
+/** 密碼最短長度（前端表單與後端驗證共用） */
+export const PASSWORD_MIN_LENGTH = 8;

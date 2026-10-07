@@ -5,7 +5,18 @@ import { useQuery } from '../../lib/useQuery';
 import { useMeta } from '../../lib/meta';
 import { formatDateTime, formatNumber, formatShortDateTime } from '../../lib/format';
 import { useToast } from '../../components/Toast';
-import { Badge, Button, EmptyState, ErrorMessage, Loading, PageHeader, Select, TextInput, type BadgeTone } from '../../components/ui';
+import {
+  Badge,
+  Button,
+  EmptyState,
+  ErrorMessage,
+  Loading,
+  PageHeader,
+  PRIORITY_TONE,
+  Select,
+  STATUS_TONE,
+  TextInput,
+} from '../../components/ui';
 import { BrandTag, IconClock, PlatformIcon } from '../../components/icons';
 import {
   COMMENT_STATUSES,
@@ -14,7 +25,6 @@ import {
   SLA_ACTIVE_STATUSES,
   STATUS_LABELS,
   type CommentStatus,
-  type Priority,
 } from '../../../../shared/constants';
 import type { CommentPreview, Paginated } from '../../../../shared/types';
 import './inbox.css';
@@ -22,15 +32,6 @@ import './inbox.css';
 const PAGE_SIZE = 50;
 const SEARCH_DEBOUNCE_MS = 300;
 
-const STATUS_TONE: Record<CommentStatus, BadgeTone> = {
-  pending: 'blue',
-  in_progress: 'purple',
-  waiting: 'teal',
-  transferred: 'orange',
-  no_action: 'gray',
-  done: 'green',
-};
-const PRIORITY_TONE: Record<Priority, BadgeTone> = { high: 'red', medium: 'orange', low: 'gray' };
 
 function Stars({ rating }: { rating: number }) {
   const r = Math.max(0, Math.min(5, Math.round(rating)));

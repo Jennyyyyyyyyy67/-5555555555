@@ -25,14 +25,18 @@ export const errorHandler: ErrorRequestHandler = (err, _req, res, _next) => {
     return;
   }
   if (err instanceof ZodError) {
+    // schema 裡寫的中文訊息（例如「請輸入品牌名稱」）直接給使用者看；zod 內建的英文訊息則換成通用中文說明。
+    // details.field 為第一個錯誤的頂層欄位名稱，前端可用來把訊息顯示在對應欄位下。
     const first = err.issues[0];
-    const field = first?.path.join('.') || '';
+    const field = first && first.path.length > 0 ? String(first.path[0]) : null;
+    const message =
+      first?.message && /[㐀-鿿]/.test(first.message)
+        ? first.message
+        : field
+          ? `欄位「${field}」格式不正確，請檢查後再送出`
+          : '資料格式不正確，請檢查後再送出';
     res.status(400).json({
-      error: {
-        code: 'validation_error',
-        message: first ? `欄位「${field}」格式不正確：${first.message}` : '資料格式不正確',
-        details: err.issues,
-      },
+      error: { code: 'validation_error', message, details: { field, issues: err.issues } },
     });
     return;
   }

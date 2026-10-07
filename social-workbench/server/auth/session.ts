@@ -68,6 +68,13 @@ export function destroySession(db: DB, token: string | undefined): void {
   run(db, 'DELETE FROM sessions WHERE token_hash = ?', [hashToken(token)]);
 }
 
-export function destroyUserSessions(db: DB, userId: number): void {
-  run(db, 'DELETE FROM sessions WHERE user_id = ?', [userId]);
+/**
+ * 登出某人員的所有裝置，回傳刪除的 session 數。
+ * exceptToken：保留這個登入狀態（例如管理員重設自己的密碼時，保留目前的裝置）。
+ */
+export function destroyUserSessions(db: DB, userId: number, opts: { exceptToken?: string } = {}): number {
+  if (opts.exceptToken) {
+    return run(db, 'DELETE FROM sessions WHERE user_id = ? AND token_hash != ?', [userId, hashToken(opts.exceptToken)]).changes;
+  }
+  return run(db, 'DELETE FROM sessions WHERE user_id = ?', [userId]).changes;
 }

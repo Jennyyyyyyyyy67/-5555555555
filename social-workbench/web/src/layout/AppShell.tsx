@@ -52,9 +52,9 @@ export function AppShell() {
           </label>
           <Select
             id="brand-scope"
+            className="topbar-brand"
             value={String(selected)}
             onChange={(e) => setSelected(e.target.value === 'all' ? 'all' : Number(e.target.value))}
-            style={{ width: 'auto', maxWidth: 220 }}
           >
             <option value="all">全部負責品牌（{activeBrands.length}）</option>
             {activeBrands.map((b) => (
@@ -66,10 +66,16 @@ export function AppShell() {
           <div className="spacer" />
           <Dropdown
             trigger={({ toggle, open }) => (
-              <button className="btn btn-ghost" onClick={toggle} aria-haspopup="menu" aria-expanded={open}>
+              <button
+                className="btn btn-ghost topbar-user"
+                onClick={toggle}
+                aria-haspopup="menu"
+                aria-expanded={open}
+                aria-label={`${user.name}（${ROLE_LABELS[user.role]}）的帳號選單`}
+              >
                 <Avatar name={user.name} size="sm" />
-                <span className="nowrap">{user.name}</span>
-                <span className="muted small nowrap">{ROLE_LABELS[user.role]}</span>
+                <span className="nowrap topbar-user-name">{user.name}</span>
+                <span className="muted small nowrap topbar-user-role">{ROLE_LABELS[user.role]}</span>
                 <IconChevronDown size={14} />
               </button>
             )}

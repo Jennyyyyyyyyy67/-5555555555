@@ -1,11 +1,11 @@
 import { Router, type Request, type Response } from 'express';
-import { z, type ZodTypeAny } from 'zod';
+import { z } from 'zod';
 import { all, get, insert, sqlIn, tx, updateById, type DB } from '../db';
 import { ensureBrandDefaults } from '../db/bootstrap';
 import { authed, requirePermission } from '../auth/middleware';
 import type { BrandScope } from '../auth/scope';
 import { audit, diffFields } from '../services/audit';
-import { badRequest, conflict, HttpError, notFound } from '../lib/errors';
+import { badRequest, conflict, notFound } from '../lib/errors';
 import { nowIso } from '../lib/clock';
 import { DEFAULT_NEAR_DUE_MINUTES } from '../../shared/constants';
 import type { Brand } from '../../shared/types';
@@ -57,16 +57,6 @@ const patchSchema = z.object({
   nearDueMinutes: nearDueSchema.optional(),
   isActive: z.boolean({ invalid_type_error: '啟用狀態必須是 true 或 false' }).optional(),
 });
-
-/** 驗證請求內容；錯誤訊息直接使用各欄位的中文說明，並在 details.field 標出欄位，方便前端顯示在對應欄位下 */
-function parseBody<S extends ZodTypeAny>(schema: S, body: unknown): z.output<S> {
-  const result = schema.safeParse(body ?? {});
-  if (result.success) return result.data;
-  const first = result.error.issues[0];
-  const field = first?.path.join('.') || null;
-  const message = first?.message && /[一-鿿]/.test(first.message) ? first.message : '資料格式不正確，請檢查後再送出';
-  throw new HttpError(400, 'validation_error', message, { field, issues: result.error.issues });
-}
 
 // ---------------- 資料讀取 ----------------
 interface BrandRow {
@@ -175,7 +165,7 @@ export function brandRoutes(): Router {
 
   r.post('/', requirePermission('manageBrands'), (req: Request, res: Response) => {
     const { user } = authed(req);
-    const input = parseBody(createSchema, req.body);
+    const input = createSchema.parse(req.body ?? {});
     const db = req.db;
     assertNameAvailable(db, input.name, null);
     assertCodeAvailable(db, input.code);
@@ -221,7 +211,7 @@ export function brandRoutes(): Router {
     const { user, scope } = authed(req);
     const db = req.db;
     const row = loadBrandRow(db, scope, req.params.id);
-    const input = parseBody(patchSchema, req.body);
+    const input = patchSchema.parse(req.body ?? {});
 
     if (input.code !== undefined) {
       const requested = typeof input.code === 'string' ? input.code.trim().toUpperCase() : null;

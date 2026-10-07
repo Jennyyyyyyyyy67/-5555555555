@@ -168,6 +168,12 @@ describe('社群帳號：新增', () => {
     const missing = await agent.post('/api/accounts').send({});
     expect(missing.status).toBe(400);
     expect(missing.body.error.message).toContain('請選擇品牌');
+
+    // 共用錯誤處理：直接使用欄位的中文訊息（不夾帶英文欄位名稱），並標出欄位供表單顯示
+    const blankName = await agent.post('/api/accounts').send(validInput(ctx.fx.brandA, { name: '  ' }));
+    expect(blankName.body.error.code).toBe('validation_error');
+    expect(blankName.body.error.message).toBe('請輸入帳號名稱');
+    expect(blankName.body.error.details.field).toBe('name');
   });
 
   it('品牌已停用時回傳 400；品牌不存在時回傳 404', async () => {

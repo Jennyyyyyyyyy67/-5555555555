@@ -8,16 +8,10 @@ import { createSession, type AuthUser } from '../auth/session';
 import { resetAllLoginFailures } from '../auth/rateLimit';
 import { audit } from '../services/audit';
 import { badRequest } from '../lib/errors';
-import { resetAndSeed, type SeedSummary } from '../seed';
+import { resetAndSeed } from '../seed';
 import { buildMe, setSessionCookie } from './auth';
 import type { CommentStatus } from '../../shared/constants';
-import type { MeResponse, MockStatsResponse } from '../../shared/types';
-
-/** POST /api/mock/reset 的回應。me 為 null 代表目前登入的帳號不在新的示範資料中，已被登出。 */
-export interface MockResetResponse {
-  summary: SeedSummary;
-  me: MeResponse | null;
-}
+import type { MockResetResponse, MockStatsResponse } from '../../shared/types';
 
 const resetSchema = z.object({ confirm: z.literal(true) });
 

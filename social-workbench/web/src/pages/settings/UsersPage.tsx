@@ -22,14 +22,12 @@ import {
   TextInput,
 } from '../../components/ui';
 import { BrandTag, IconEdit, IconKey, IconPlus } from '../../components/icons';
-import { ROLE_DESCRIPTIONS, ROLE_LABELS, ROLES, type Role } from '../../../../shared/constants';
+import { PASSWORD_MIN_LENGTH, ROLE_DESCRIPTIONS, ROLE_LABELS, ROLES, type Role } from '../../../../shared/constants';
 import type { BrandSummary, UserInput, UserPatch, UserRow } from '../../../../shared/types';
 import './users.css';
 
 const ROLE_TONE: Record<Role, 'purple' | 'blue' | 'gray'> = { admin: 'purple', supervisor: 'blue', operator: 'gray' };
 
-/** 與後端一致（server/auth/password.ts 的 PASSWORD_MIN_LENGTH） */
-const PASSWORD_MIN_LENGTH = 8;
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 /** 產生 12 碼隨機密碼（排除容易看錯的 0/O、1/l/I） */

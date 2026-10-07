@@ -1,6 +1,5 @@
 import { Router, type Request, type Response } from 'express';
-import { createHash } from 'node:crypto';
-import { z, type ZodTypeAny } from 'zod';
+import { z } from 'zod';
 import { all, get, insert, run, sqlIn, tx, updateById, type DB } from '../db';
 import { authed, requirePermission } from '../auth/middleware';
 import { assertBrandAccess, resolveBrandFilter, type BrandScope } from '../auth/scope';
@@ -10,14 +9,7 @@ import { audit } from '../services/audit';
 import { badRequest, conflict, HttpError, notFound } from '../lib/errors';
 import { nowIso } from '../lib/clock';
 import { ROLE_LABELS, ROLES, type Role } from '../../shared/constants';
-import type { UserRow } from '../../shared/types';
-
-/** 人員名錄（指派負責人、@提及用）：只回傳最少的欄位 */
-export interface UserDirectoryEntry {
-  id: number;
-  name: string;
-  role: Role;
-}
+import type { UserDirectoryEntry, UserRow } from '../../shared/types';
 
 // ---------------- 輸入驗證 ----------------
 const nameSchema = z
@@ -67,16 +59,6 @@ const patchSchema = z.object({
 });
 
 const resetPasswordSchema = z.object({ password: passwordSchema });
-
-/** 驗證請求內容；錯誤訊息直接使用各欄位的中文說明，並在 details.field 標出欄位，方便前端顯示在對應欄位下 */
-function parseBody<S extends ZodTypeAny>(schema: S, body: unknown): z.output<S> {
-  const result = schema.safeParse(body ?? {});
-  if (result.success) return result.data;
-  const first = result.error.issues[0];
-  const field = first?.path.length ? String(first.path[0]) : null;
-  const message = first?.message && /[一-鿿]/.test(first.message) ? first.message : '資料格式不正確，請檢查後再送出';
-  throw new HttpError(400, 'validation_error', message, { field, issues: result.error.issues });
-}
 
 function parseId(raw: unknown): number {
   const id = Number(raw);
@@ -162,8 +144,6 @@ const uniqSorted = (ids: number[]) => [...new Set(ids)].sort((a, b) => a - b);
 const sameIds = (a: number[], b: number[]) => a.length === b.length && a.every((v, i) => v === b[i]);
 const brandListText = (names: string[]) => (names.length ? names.join('、') : '（無）');
 
-const hashToken = (token: string) => createHash('sha256').update(token).digest('hex');
-
 function countOtherActiveAdmins(db: DB, excludeId: number): number {
   const row = get<{ n: number }>(db, "SELECT COUNT(*) AS n FROM users WHERE role = 'admin' AND is_active = 1 AND id != ?", [
     excludeId,
@@ -228,12 +208,12 @@ export function userRoutes(): Router {
   r.post('/', requirePermission('manageUsers'), (req: Request, res: Response) => {
     const { user, scope } = authed(req);
     const db = req.db;
-    const input = parseBody(createSchema, req.body);
+    const input = createSchema.parse(req.body ?? {});
     // 管理員可存取全部品牌，不儲存授權品牌
     const brandIds = input.role === 'admin' ? [] : uniqSorted(input.brandIds);
     const brandNames = assertBrandsExist(db, brandIds);
     if (get(db, 'SELECT id FROM users WHERE email = ? COLLATE NOCASE', [input.email])) {
-      throw new HttpError(409, 'conflict', '此 Email 已被使用，請改用其他 Email 或編輯既有人員', { field: 'email' });
+      throw conflict('此 Email 已被使用，請改用其他 Email 或編輯既有人員', { field: 'email' });
     }
 
     const id = tx(db, () => {
@@ -276,7 +256,7 @@ export function userRoutes(): Router {
     const { user, scope } = authed(req);
     const db = req.db;
     const id = parseId(req.params.id);
-    const input = parseBody(patchSchema, req.body);
+    const input = patchSchema.parse(req.body ?? {});
     const current = loadUser(db, id);
     if (!current) throw notFound('找不到此人員，可能已被移除，請重新整理頁面');
 
@@ -393,16 +373,14 @@ export function userRoutes(): Router {
     const { user } = authed(req);
     const db = req.db;
     const id = parseId(req.params.id);
-    const { password } = parseBody(resetPasswordSchema, req.body);
+    const { password } = resetPasswordSchema.parse(req.body ?? {});
     const target = loadUser(db, id);
     if (!target) throw notFound('找不到此人員，可能已被移除，請重新整理頁面');
 
     tx(db, () => {
       updateById(db, 'users', id, { password_hash: hashPassword(password), updated_at: nowIso() });
-      const keepCurrent = id === user.id && !!req.sessionToken;
-      const revoked = keepCurrent
-        ? run(db, 'DELETE FROM sessions WHERE user_id = ? AND token_hash != ?', [id, hashToken(req.sessionToken!)]).changes
-        : run(db, 'DELETE FROM sessions WHERE user_id = ?', [id]).changes;
+      // 重設自己的密碼時保留目前這個登入狀態，只登出其他裝置
+      const revoked = destroyUserSessions(db, id, { exceptToken: id === user.id ? req.sessionToken : undefined });
       audit(db, {
         actorType: 'user',
         actorUserId: user.id,

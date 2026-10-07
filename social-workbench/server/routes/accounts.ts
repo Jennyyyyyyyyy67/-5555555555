@@ -9,15 +9,12 @@ import { badRequest, conflict, notFound } from '../lib/errors';
 import { nowIso } from '../lib/clock';
 import { adapterKeyFor, getAccountType, getAdapter } from '../adapters/registry';
 import { ACCOUNT_TYPE_LABELS, PLATFORM_LABELS, type AccountStatus } from '../../shared/constants';
-import type { SocialAccount, TestConnectionResponse } from '../../shared/types';
-
-/** 新增社群帳號的回應：帳號資料 + 建立後立即執行的連線測試結果 */
-export type CreateSocialAccountResponse = SocialAccount & { connection: ConnectionResult };
-
-interface ConnectionResult {
-  ok: boolean;
-  message: string;
-}
+import type {
+  ConnectionTestResult as ConnectionResult,
+  CreateSocialAccountResponse,
+  SocialAccount,
+  TestConnectionResponse,
+} from '../../shared/types';
 
 interface AccountRow {
   id: number;

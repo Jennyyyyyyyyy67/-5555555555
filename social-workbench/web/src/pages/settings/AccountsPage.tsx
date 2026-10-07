@@ -1,7 +1,7 @@
 import { useEffect, useState, type FormEvent } from 'react';
 import { useAuth } from '../../auth/AuthContext';
 import { useBrandScope } from '../../brand/BrandScope';
-import { api, errorMessage } from '../../lib/api';
+import { api, ApiError, errorMessage } from '../../lib/api';
 import { useQuery } from '../../lib/useQuery';
 import { useMeta } from '../../lib/meta';
 import { formatDateTime, formatNumber, formatRelative } from '../../lib/format';
@@ -25,26 +25,20 @@ import {
 import { BrandTag, IconEdit, IconPlus, IconRefresh, PlatformIcon } from '../../components/icons';
 import {
   ACCOUNT_STATUS_LABELS,
+  CAPABILITIES,
+  CAPABILITY_LABELS,
   CONTENT_TYPE_LABELS,
-  INTERACTION_ACTION_LABELS,
   type AccountStatus,
 } from '../../../../shared/constants';
-import type { PlatformCapabilities, SocialAccount, TestConnectionResponse } from '../../../../shared/types';
+import type {
+  CreateSocialAccountResponse,
+  PlatformCapabilities,
+  SocialAccount,
+  TestConnectionResponse,
+} from '../../../../shared/types';
 import './accounts.css';
 
-/** POST /api/accounts 的回應：帳號資料 + 建立後立即執行的連線測試結果 */
-type CreatedAccount = SocialAccount & { connection: { ok: boolean; message: string } };
-
 const STATUS_TONE: Record<AccountStatus, BadgeTone> = { connected: 'green', disconnected: 'gray', error: 'red' };
-
-/** 平台能力對應的動作名稱（「封鎖」在此只放短標籤，完整說明見 INTERACTION_ACTION_LABELS） */
-const CAPABILITY_CHIPS: Array<{ key: keyof PlatformCapabilities; label: string }> = [
-  { key: 'reply', label: '回覆' },
-  { key: 'like', label: INTERACTION_ACTION_LABELS.like },
-  { key: 'hide', label: INTERACTION_ACTION_LABELS.hide },
-  { key: 'delete', label: INTERACTION_ACTION_LABELS.delete },
-  { key: 'block', label: '封鎖' },
-];
 
 const FALLBACK_BRAND_COLOR = '#9aa3af';
 
@@ -52,14 +46,14 @@ function CapabilityChips({ capabilities }: { capabilities: PlatformCapabilities 
   if (!capabilities) return <span className="muted small">—</span>;
   return (
     <span className="acc-chips">
-      {CAPABILITY_CHIPS.map((c) =>
-        capabilities[c.key] ? (
-          <Badge key={c.key} tone="teal">
-            {c.label}
+      {CAPABILITIES.map((key) =>
+        capabilities[key] ? (
+          <Badge key={key} tone="teal">
+            {CAPABILITY_LABELS[key]}
           </Badge>
         ) : (
-          <span key={c.key} className="badge acc-chip-off" title="此平台 API 不支援">
-            {c.label}
+          <span key={key} className="badge acc-chip-off" title="此平台 API 不支援">
+            {CAPABILITY_LABELS[key]}
             <span className="sr-only">（此平台 API 不支援）</span>
           </span>
         ),
@@ -345,8 +339,15 @@ export default function AccountsPage() {
 
 // ---------------- 新增社群帳號 ----------------
 type AddField = 'brandId' | 'platform' | 'accountType' | 'name' | 'handle' | 'externalId';
+const ADD_FIELDS: AddField[] = ['brandId', 'platform', 'accountType', 'name', 'handle', 'externalId'];
 
-function AddAccountModal({ onClose, onCreated }: { onClose: () => void; onCreated: (a: CreatedAccount) => void }) {
+function AddAccountModal({
+  onClose,
+  onCreated,
+}: {
+  onClose: () => void;
+  onCreated: (a: CreateSocialAccountResponse) => void;
+}) {
   const { activeBrands, currentBrand } = useBrandScope();
   const { meta, platform: platformOf } = useMeta();
   const platforms = meta?.platforms ?? [];
@@ -398,7 +399,7 @@ function AddAccountModal({ onClose, onCreated }: { onClose: () => void; onCreate
     if (!validate()) return;
     setBusy(true);
     try {
-      const created = await api.post<CreatedAccount>('/accounts', {
+      const created = await api.post<CreateSocialAccountResponse>('/accounts', {
         brandId: Number(brandId),
         platform,
         accountType,
@@ -408,7 +409,13 @@ function AddAccountModal({ onClose, onCreated }: { onClose: () => void; onCreate
       });
       onCreated(created);
     } catch (err) {
-      setServerError(errorMessage(err));
+      // 欄位格式錯誤時後端會在 details.field 標出欄位，顯示在該欄位下；其他錯誤顯示在對話框上方
+      const field = err instanceof ApiError ? (err.details as { field?: unknown } | undefined)?.field : undefined;
+      if (typeof field === 'string' && (ADD_FIELDS as string[]).includes(field)) {
+        setErrors({ [field]: errorMessage(err) });
+      } else {
+        setServerError(errorMessage(err));
+      }
       setBusy(false);
     }
   };

@@ -3,12 +3,17 @@ import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '../auth/AuthContext';
 import { useBrandScope } from '../brand/BrandScope';
 import { Avatar, Button, Dropdown, Select } from '../components/ui';
+import { api } from '../lib/api';
+import { useQuery } from '../lib/useQuery';
+import type { DemoAccountsResponse } from '../../../shared/types';
 import { IconChevronDown, IconLogout, IconMenu } from '../components/icons';
 import { NAV_SECTIONS } from './nav';
 import { ROLE_LABELS } from '../../../shared/constants';
 
 export function AppShell() {
-  const { user, logout, can } = useAuth();
+  const { user, logout, login, can } = useAuth();
+  const demo = useQuery(() => api.get<DemoAccountsResponse>('/auth/demo-accounts'), []);
+  const demoAccounts = demo.data?.enabled ? demo.data.accounts : [];
   const { selected, setSelected, activeBrands } = useBrandScope();
   const [navOpen, setNavOpen] = useState(false);
   const location = useLocation();
@@ -88,6 +93,30 @@ export function AppShell() {
                   {ROLE_LABELS[user.role]}
                 </div>
                 <div className="menu-sep" />
+                {demoAccounts.length > 0 && (
+                  <>
+                    <div className="menu-label">切換示範帳號（測試用）</div>
+                    {demoAccounts.map((a) => (
+                      <button
+                        key={a.email}
+                        className="menu-item"
+                        role="menuitem"
+                        disabled={a.email === user.email}
+                        onClick={async () => {
+                          close();
+                          await api.post('/auth/logout').catch(() => {});
+                          await login(a.email, a.password);
+                          navigate('/inbox', { replace: true });
+                        }}
+                      >
+                        <Avatar name={a.name} size="sm" />
+                        {a.name}
+                        <span className="muted small">{ROLE_LABELS[a.role]}</span>
+                      </button>
+                    ))}
+                    <div className="menu-sep" />
+                  </>
+                )}
                 <button
                   className="menu-item"
                   role="menuitem"

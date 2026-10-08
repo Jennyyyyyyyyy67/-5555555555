@@ -23,6 +23,9 @@ interface AuthState {
 
 const AuthContext = createContext<AuthState | null>(null);
 
+/** sessionStorage key：設定後，示範模式不自動登入 */
+export const MANUAL_LOGIN_KEY = 'swb.manualLogin';
+
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<SessionUser | null>(null);
   const [brands, setBrands] = useState<BrandSummary[]>([]);
@@ -73,6 +76,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   );
 
   const logout = useCallback(async () => {
+    // 主動登出後，登入頁不再自動以示範帳號進入（直到關閉分頁）
+    try {
+      sessionStorage.setItem(MANUAL_LOGIN_KEY, '1');
+    } catch {
+      /* 忽略 */
+    }
     try {
       await api.post('/auth/logout');
     } finally {

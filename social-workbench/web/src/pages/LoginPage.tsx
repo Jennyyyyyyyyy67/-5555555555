@@ -1,6 +1,6 @@
-import { useState, type FormEvent } from 'react';
+import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { Navigate, useLocation, useNavigate } from 'react-router-dom';
-import { useAuth } from '../auth/AuthContext';
+import { MANUAL_LOGIN_KEY, useAuth } from '../auth/AuthContext';
 import { api, errorMessage } from '../lib/api';
 import { useQuery } from '../lib/useQuery';
 import { Alert, Avatar, Badge, Button, Field, TextInput } from '../components/ui';
@@ -19,6 +19,24 @@ export default function LoginPage() {
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const demo = useQuery(() => api.get<DemoAccountsResponse>('/auth/demo-accounts'), []);
+
+  // 測試階段（示範模式）：打開網站就自動以示範管理員進入，不必登入。
+  // 主動登出後不再自動進入，方便測試登入頁本身。
+  const autoTried = useRef(false);
+  useEffect(() => {
+    if (loading || user || autoTried.current || !demo.data?.enabled) return;
+    let manual = false;
+    try {
+      manual = sessionStorage.getItem(MANUAL_LOGIN_KEY) === '1';
+    } catch {
+      /* 忽略 */
+    }
+    const admin = demo.data.accounts.find((a) => a.role === 'admin');
+    if (manual || !admin) return;
+    autoTried.current = true;
+    void doLogin(admin.email, admin.password, admin.email);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loading, user, demo.data]);
 
   if (!loading && user) return <Navigate to={from && from !== '/login' ? from : '/inbox'} replace />;
 

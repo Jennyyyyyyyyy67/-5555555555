@@ -100,15 +100,15 @@ function toBrand(row: BrandRow, withCounts: boolean): Brand {
   return brand;
 }
 
-function listBrands(db: DB, scope: BrandScope): Brand[] {
+async function listBrands(db: DB, scope: BrandScope): Promise<Brand[]> {
   if (scope.isAdmin) {
-    const rows = all<BrandRow>(
+    const rows = await all<BrandRow>(
       db,
       `SELECT b.*, ${COUNT_COLUMNS} FROM brands b WHERE ${sqlIn('b.id', scope.brandIds)} ORDER BY b.is_active DESC, b.id`,
     );
     return rows.map((r) => toBrand(r, true));
   }
-  const rows = all<BrandRow>(
+  const rows = await all<BrandRow>(
     db,
     `SELECT b.* FROM brands b WHERE ${sqlIn('b.id', scope.activeBrandIds)} AND b.is_active = 1 ORDER BY b.id`,
   );
@@ -121,23 +121,23 @@ function parseId(raw: unknown): number | null {
 }
 
 /** 依 id 取得品牌；不存在或不在可存取範圍內一律回 404（不洩漏品牌是否存在） */
-function loadBrandRow(db: DB, scope: BrandScope, rawId: unknown): BrandRow {
+async function loadBrandRow(db: DB, scope: BrandScope, rawId: unknown): Promise<BrandRow> {
   const id = parseId(rawId);
   if (id === null || !scope.brandIds.includes(id)) throw notFound('找不到品牌');
   const row = scope.isAdmin
-    ? get<BrandRow>(db, `SELECT b.*, ${COUNT_COLUMNS} FROM brands b WHERE b.id = ?`, [id])
-    : get<BrandRow>(db, 'SELECT b.* FROM brands b WHERE b.id = ? AND b.is_active = 1', [id]);
+    ? await get<BrandRow>(db, `SELECT b.*, ${COUNT_COLUMNS} FROM brands b WHERE b.id = ?`, [id])
+    : await get<BrandRow>(db, 'SELECT b.* FROM brands b WHERE b.id = ? AND b.is_active = 1', [id]);
   if (!row) throw notFound('找不到品牌');
   return row;
 }
 
-function assertNameAvailable(db: DB, name: string, exceptId: number | null): void {
-  const dup = get<{ id: number }>(db, 'SELECT id FROM brands WHERE name = ? AND id <> ?', [name, exceptId ?? 0]);
+async function assertNameAvailable(db: DB, name: string, exceptId: number | null): Promise<void> {
+  const dup = await get<{ id: number }>(db, 'SELECT id FROM brands WHERE name = ? AND id <> ?', [name, exceptId ?? 0]);
   if (dup) throw conflict('品牌名稱已存在，請改用其他名稱', { field: 'name' });
 }
 
-function assertCodeAvailable(db: DB, code: string): void {
-  const dup = get<{ id: number }>(db, 'SELECT id FROM brands WHERE code = ? COLLATE NOCASE', [code]);
+async function assertCodeAvailable(db: DB, code: string): Promise<void> {
+  const dup = await get<{ id: number }>(db, 'SELECT id FROM brands WHERE lower(code) = lower(?)', [code]);
   if (dup) throw conflict('品牌代碼已存在（不分大小寫），請改用其他代碼', { field: 'code' });
 }
 
@@ -153,26 +153,26 @@ export function brandRoutes(): Router {
   const r = Router();
 
   // 所有登入者：管理員看到全部品牌（含停用）與統計；其他角色只看到自己被授權且啟用中的品牌
-  r.get('/', (req: Request, res: Response) => {
+  r.get('/', async (req: Request, res: Response) => {
     const { scope } = authed(req);
-    res.json(listBrands(req.db, scope));
+    res.json(await listBrands(req.db, scope));
   });
 
-  r.get('/:id', (req: Request, res: Response) => {
+  r.get('/:id', async (req: Request, res: Response) => {
     const { scope } = authed(req);
-    res.json(toBrand(loadBrandRow(req.db, scope, req.params.id), scope.isAdmin));
+    res.json(toBrand(await loadBrandRow(req.db, scope, req.params.id), scope.isAdmin));
   });
 
-  r.post('/', requirePermission('manageBrands'), (req: Request, res: Response) => {
+  r.post('/', requirePermission('manageBrands'), async (req: Request, res: Response) => {
     const { user } = authed(req);
     const input = createSchema.parse(req.body ?? {});
     const db = req.db;
-    assertNameAvailable(db, input.name, null);
-    assertCodeAvailable(db, input.code);
+    await assertNameAvailable(db, input.name, null);
+    await assertCodeAvailable(db, input.code);
 
-    const id = tx(db, () => {
+    const id = await tx(db, async () => {
       const now = nowIso();
-      const newId = insert(db, 'brands', {
+      const newId = await insert(db, 'brands', {
         name: input.name,
         code: input.code,
         color: input.color,
@@ -182,8 +182,8 @@ export function brandRoutes(): Router {
         created_at: now,
         updated_at: now,
       });
-      ensureBrandDefaults(db, newId, user.id);
-      audit(db, {
+      await ensureBrandDefaults(db, newId, user.id);
+      await audit(db, {
         actorType: 'user',
         actorUserId: user.id,
         brandId: newId,
@@ -203,14 +203,14 @@ export function brandRoutes(): Router {
       return newId;
     });
 
-    const row = get<BrandRow>(db, `SELECT b.*, ${COUNT_COLUMNS} FROM brands b WHERE b.id = ?`, [id])!;
+    const row = (await get<BrandRow>(db, `SELECT b.*, ${COUNT_COLUMNS} FROM brands b WHERE b.id = ?`, [id]))!;
     res.status(201).json(toBrand(row, true));
   });
 
-  r.patch('/:id', requirePermission('manageBrands'), (req: Request, res: Response) => {
+  r.patch('/:id', requirePermission('manageBrands'), async (req: Request, res: Response) => {
     const { user, scope } = authed(req);
     const db = req.db;
-    const row = loadBrandRow(db, scope, req.params.id);
+    const row = await loadBrandRow(db, scope, req.params.id);
     const input = patchSchema.parse(req.body ?? {});
 
     if (input.code !== undefined) {
@@ -235,10 +235,10 @@ export function brandRoutes(): Router {
     const wasActive = row.is_active === 1;
     const activeChanged = input.isActive !== undefined && input.isActive !== wasActive;
 
-    if (diff?.after.name !== undefined) assertNameAvailable(db, diff.after.name, row.id);
+    if (diff?.after.name !== undefined) await assertNameAvailable(db, diff.after.name, row.id);
 
     if (diff || activeChanged) {
-      tx(db, () => {
+      await tx(db, async () => {
         const patch: Record<string, unknown> = { updated_at: nowIso() };
         if (diff) {
           if (diff.after.name !== undefined) patch.name = diff.after.name;
@@ -247,12 +247,12 @@ export function brandRoutes(): Router {
           if (diff.after.nearDueMinutes !== undefined) patch.near_due_minutes = diff.after.nearDueMinutes;
         }
         if (activeChanged) patch.is_active = input.isActive;
-        updateById(db, 'brands', row.id, patch);
+        await updateById(db, 'brands', row.id, patch);
 
         if (diff) {
           const labels = Object.keys(diff.after).map((k) => FIELD_LABELS[k] ?? k);
           const renamed = diff.after.name !== undefined ? `（新名稱「${diff.after.name}」）` : '';
-          audit(db, {
+          await audit(db, {
             actorType: 'user',
             actorUserId: user.id,
             brandId: row.id,
@@ -266,7 +266,7 @@ export function brandRoutes(): Router {
         }
         if (activeChanged) {
           const name = diff?.after.name ?? row.name;
-          audit(db, {
+          await audit(db, {
             actorType: 'user',
             actorUserId: user.id,
             brandId: row.id,
@@ -283,7 +283,7 @@ export function brandRoutes(): Router {
       });
     }
 
-    const updated = get<BrandRow>(db, `SELECT b.*, ${COUNT_COLUMNS} FROM brands b WHERE b.id = ?`, [row.id])!;
+    const updated = (await get<BrandRow>(db, `SELECT b.*, ${COUNT_COLUMNS} FROM brands b WHERE b.id = ?`, [row.id]))!;
     res.json(toBrand(updated, true));
   });
 

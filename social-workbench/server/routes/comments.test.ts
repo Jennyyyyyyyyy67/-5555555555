@@ -3,15 +3,15 @@ import { createTestContext } from '../test/helpers';
 import { get, insert, run } from '../db';
 import type { CommentPreview, Paginated } from '../../shared/types';
 
-type Ctx = ReturnType<typeof createTestContext>;
+type Ctx = Awaited<ReturnType<typeof createTestContext>>;
 type Page = Paginated<CommentPreview>;
 
 /** 在指定品牌的 fixture 帳號／貼文下新增一則留言 */
-function addComment(ctx: Ctx, brand: 'A' | 'B', ext: string, fields: Record<string, unknown> = {}): number {
+async function addComment(ctx: Ctx, brand: 'A' | 'B', ext: string, fields: Record<string, unknown> = {}): Promise<number> {
   const brandId = brand === 'A' ? ctx.fx.brandA : ctx.fx.brandB;
   const accountId = brand === 'A' ? ctx.fx.accountA : ctx.fx.accountB;
   const postId = brand === 'A' ? ctx.fx.postA : ctx.fx.postB;
-  return insert(ctx.db, 'comments', {
+  return await insert(ctx.db, 'comments', {
     brand_id: brandId, social_account_id: accountId, post_id: postId, external_id: ext, author_name: '顧客',
     body: `留言 ${ext}`, occurred_at: '2026-01-01T00:00:00.000Z', fetched_at: '2026-01-01T00:00:00.000Z',
     created_at: '2026-01-01T00:00:00.000Z', updated_at: '2026-01-01T00:00:00.000Z', ...fields,
@@ -20,7 +20,7 @@ function addComment(ctx: Ctx, brand: 'A' | 'B', ext: string, fields: Record<stri
 
 describe('GET /api/comments/preview：品牌隔離', () => {
   it('操作人員甲只看到品牌甲的留言，並帶出品牌、帳號、貼文資訊', async () => {
-    const ctx = createTestContext();
+    const ctx = await createTestContext();
     const agent = await ctx.loginAs('opA');
     const res = await agent.get('/api/comments/preview');
     expect(res.status).toBe(200);
@@ -52,7 +52,7 @@ describe('GET /api/comments/preview：品牌隔離', () => {
   });
 
   it('操作人員乙只看到品牌乙；管理員看到全部', async () => {
-    const ctx = createTestContext();
+    const ctx = await createTestContext();
     const opB = await ctx.loginAs('opB');
     const resB = await opB.get('/api/comments/preview');
     expect(resB.status).toBe(200);
@@ -64,7 +64,7 @@ describe('GET /api/comments/preview：品牌隔離', () => {
   });
 
   it('指定沒有權限的品牌回傳 403', async () => {
-    const ctx = createTestContext();
+    const ctx = await createTestContext();
     const agent = await ctx.loginAs('opA');
     const res = await agent.get('/api/comments/preview').query({ brand: ctx.fx.brandB });
     expect(res.status).toBe(403);
@@ -73,7 +73,7 @@ describe('GET /api/comments/preview：品牌隔離', () => {
   });
 
   it('指定其他品牌的社群帳號只會得到空結果', async () => {
-    const ctx = createTestContext();
+    const ctx = await createTestContext();
     const agent = await ctx.loginAs('opA');
     const other = await agent.get('/api/comments/preview').query({ accountId: ctx.fx.accountB });
     expect(other.status).toBe(200);
@@ -84,23 +84,23 @@ describe('GET /api/comments/preview：品牌隔離', () => {
   });
 
   it('預設不含停用中品牌的留言（管理員也一樣）', async () => {
-    const ctx = createTestContext();
-    run(ctx.db, 'UPDATE brands SET is_active = 0 WHERE id = ?', [ctx.fx.brandB]);
+    const ctx = await createTestContext();
+    await run(ctx.db, 'UPDATE brands SET is_active = 0 WHERE id = ?', [ctx.fx.brandB]);
     const agent = await ctx.loginAs('admin');
     const res = await agent.get('/api/comments/preview');
     expect(res.body.items.map((c: CommentPreview) => c.brandId)).toEqual([ctx.fx.brandA]);
   });
 
   it('未登入回傳 401', async () => {
-    const ctx = createTestContext();
+    const ctx = await createTestContext();
     expect((await request(ctx.app).get('/api/comments/preview')).status).toBe(401);
   });
 });
 
 describe('GET /api/comments/preview：篩選與分頁', () => {
   it('依狀態、平台篩選；狀態不正確回傳 400', async () => {
-    const ctx = createTestContext();
-    addComment(ctx, 'A', 'done-1', { status: 'done' });
+    const ctx = await createTestContext();
+    await addComment(ctx, 'A', 'done-1', { status: 'done' });
     const agent = await ctx.loginAs('opA');
 
     const done = await agent.get('/api/comments/preview').query({ status: 'done' });
@@ -119,10 +119,10 @@ describe('GET /api/comments/preview：篩選與分頁', () => {
   });
 
   it('搜尋留言內容與留言者名稱，% 與 _ 視為一般文字', async () => {
-    const ctx = createTestContext();
-    addComment(ctx, 'A', 'pct', { body: '折扣真的有 50% 嗎', author_name: '小明' });
-    addComment(ctx, 'A', 'name', { body: '請問門市在哪', author_name: '王_大同' });
-    addComment(ctx, 'B', 'b-hit', { body: '折扣真的有 50% 嗎（品牌乙）' });
+    const ctx = await createTestContext();
+    await addComment(ctx, 'A', 'pct', { body: '折扣真的有 50% 嗎', author_name: '小明' });
+    await addComment(ctx, 'A', 'name', { body: '請問門市在哪', author_name: '王_大同' });
+    await addComment(ctx, 'B', 'b-hit', { body: '折扣真的有 50% 嗎（品牌乙）' });
     const agent = await ctx.loginAs('opA');
 
     const byBody = await agent.get('/api/comments/preview').query({ q: '50%' });
@@ -139,9 +139,9 @@ describe('GET /api/comments/preview：篩選與分頁', () => {
   });
 
   it('依時間由新到舊排序並分頁；limit 預設 50、最多 200', async () => {
-    const ctx = createTestContext();
+    const ctx = await createTestContext();
     const ids: number[] = [];
-    for (let i = 1; i <= 5; i++) ids.push(addComment(ctx, 'A', `p${i}`, { occurred_at: `2026-02-0${i}T00:00:00.000Z` }));
+    for (let i = 1; i <= 5; i++) ids.push(await addComment(ctx, 'A', `p${i}`, { occurred_at: `2026-02-0${i}T00:00:00.000Z` }));
     const agent = await ctx.loginAs('opA');
 
     const page1 = await agent.get('/api/comments/preview').query({ limit: 2 });
@@ -161,9 +161,9 @@ describe('GET /api/comments/preview：篩選與分頁', () => {
   });
 
   it('同一時間的留言以 id 由大到小排序，並帶出類型、負責人、標籤等欄位', async () => {
-    const ctx = createTestContext();
-    const category = get<{ id: number }>(ctx.db, "SELECT id FROM comment_categories WHERE key = 'complaint'")!;
-    const id = addComment(ctx, 'A', 'rich', {
+    const ctx = await createTestContext();
+    const category = (await get<{ id: number }>(ctx.db, "SELECT id FROM comment_categories WHERE key = 'complaint'"))!;
+    const id = await addComment(ctx, 'A', 'rich', {
       category_id: category.id, priority: 'high', assignee_id: ctx.fx.opA, tags: ['濾芯', '漏水'],
       risk_flags: ['complaint'], risk_level: 'medium', sentiment: 'negative', handling_mode: 'manual',
       sla_due_at: '2026-01-01T00:15:00.000Z', rating: 2,

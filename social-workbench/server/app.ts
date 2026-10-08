@@ -15,7 +15,7 @@ export interface AppOptions {
 export function createApp(db: DB, opts: AppOptions = {}): Express {
   const app = express();
   app.disable('x-powered-by');
-  app.set('trust proxy', 'loopback');
+  app.set('trust proxy', config.onVercel ? true : 'loopback');
 
   app.use((req, res, next) => {
     req.db = db;

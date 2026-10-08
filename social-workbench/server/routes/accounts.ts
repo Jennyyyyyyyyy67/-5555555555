@@ -83,8 +83,8 @@ function parseId(raw: unknown): number {
 }
 
 /** 依 id 取得帳號；不存在或不在使用者的品牌範圍內一律回 404（不洩漏資料是否存在） */
-function loadAccount(db: DB, scope: BrandScope, id: number): AccountRow {
-  const row = get<AccountRow>(db, `${SELECT_ACCOUNT} WHERE a.id = ? AND ${sqlIn('a.brand_id', scope.brandIds)}`, [id]);
+async function loadAccount(db: DB, scope: BrandScope, id: number): Promise<AccountRow> {
+  const row = await get<AccountRow>(db, `${SELECT_ACCOUNT} WHERE a.id = ? AND ${sqlIn('a.brand_id', scope.brandIds)}`, [id]);
   if (!row) throw notFound(NOT_FOUND_MESSAGE);
   return row;
 }
@@ -119,11 +119,11 @@ async function testAndRecord(db: DB, row: AccountRow, user: AuthUser): Promise<C
   }
   const status: AccountStatus = result.ok ? 'connected' : 'error';
   const now = nowIso();
-  tx(db, () => {
-    const current = get<{ status: AccountStatus; name: string }>(db, 'SELECT status, name FROM social_accounts WHERE id = ?', [row.id]);
+  await tx(db, async () => {
+    const current = await get<{ status: AccountStatus; name: string }>(db, 'SELECT status, name FROM social_accounts WHERE id = ?', [row.id]);
     if (!current) return;
-    updateById(db, 'social_accounts', row.id, { status, last_checked_at: now });
-    audit(db, {
+    await updateById(db, 'social_accounts', row.id, { status, last_checked_at: now });
+    await audit(db, {
       actorType: 'user',
       actorUserId: user.id,
       brandId: row.brand_id,
@@ -185,7 +185,7 @@ export function accountRoutes(): Router {
   const r = Router();
 
   // 列表：管理員可看到已停用品牌的帳號；主管只看到自己負責且啟用中的品牌
-  r.get('/', requirePermission('viewAccounts'), (req, res) => {
+  r.get('/', requirePermission('viewAccounts'), async (req, res) => {
     const { scope } = authed(req);
     const brandIds = resolveBrandFilter(scope, req.query.brand, 'all');
     const platform = req.query.platform;
@@ -196,13 +196,13 @@ export function accountRoutes(): Router {
       where.push('a.platform = ?');
       params.push(platform);
     }
-    const rows = all<AccountRow>(req.db, `${SELECT_ACCOUNT} WHERE ${where.join(' AND ')} ORDER BY a.brand_id, a.platform, a.id`, params);
+    const rows = await all<AccountRow>(req.db, `${SELECT_ACCOUNT} WHERE ${where.join(' AND ')} ORDER BY a.brand_id, a.platform, a.id`, params);
     res.json(rows.map(toAccount) satisfies SocialAccount[]);
   });
 
-  r.get('/:id', requirePermission('viewAccounts'), (req, res) => {
+  r.get('/:id', requirePermission('viewAccounts'), async (req, res) => {
     const { scope } = authed(req);
-    res.json(toAccount(loadAccount(req.db, scope, parseId(req.params.id))) satisfies SocialAccount);
+    res.json(toAccount(await loadAccount(req.db, scope, parseId(req.params.id))) satisfies SocialAccount);
   });
 
   r.post('/', requirePermission('manageAccounts'), async (req, res) => {
@@ -210,7 +210,7 @@ export function accountRoutes(): Router {
     const input = createSchema.parse(req.body ?? {});
     const db = req.db;
 
-    const brand = get<{ id: number; name: string; is_active: number }>(
+    const brand = await get<{ id: number; name: string; is_active: number }>(
       db,
       `SELECT id, name, is_active FROM brands WHERE id = ? AND ${sqlIn('id', scope.brandIds)}`,
       [input.brandId],
@@ -223,7 +223,7 @@ export function accountRoutes(): Router {
     const typeDef = getAccountType(input.platform, input.accountType);
     if (!typeDef) throw badRequest(`此平台不支援這種帳號類型，請重新選擇${adapter.label}的帳號類型`);
 
-    const existing = get<{ brand_name: string; is_active: number }>(
+    const existing = await get<{ brand_name: string; is_active: number }>(
       db,
       `SELECT b.name AS brand_name, a.is_active FROM social_accounts a JOIN brands b ON b.id = a.brand_id
        WHERE a.platform = ? AND a.external_id = ?`,
@@ -240,8 +240,8 @@ export function accountRoutes(): Router {
     const now = nowIso();
     const handle = input.handle ?? '';
     const adapterKey = adapterKeyFor(input.platform);
-    const id = tx(db, () => {
-      const newId = insert(db, 'social_accounts', {
+    const id = await tx(db, async () => {
+      const newId = await insert(db, 'social_accounts', {
         brand_id: brand.id,
         platform: input.platform,
         account_type: input.accountType,
@@ -254,7 +254,7 @@ export function accountRoutes(): Router {
         created_at: now,
         updated_at: now,
       });
-      audit(db, {
+      await audit(db, {
         actorType: 'user',
         actorUserId: user.id,
         brandId: brand.id,
@@ -275,15 +275,15 @@ export function accountRoutes(): Router {
       return newId;
     });
 
-    const connection = await testAndRecord(db, loadAccount(db, scope, id), user);
-    const body: CreateSocialAccountResponse = { ...toAccount(loadAccount(db, scope, id)), connection };
+    const connection = await testAndRecord(db, await loadAccount(db, scope, id), user);
+    const body: CreateSocialAccountResponse = { ...toAccount(await loadAccount(db, scope, id)), connection };
     res.status(201).json(body);
   });
 
-  r.patch('/:id', requirePermission('manageAccounts'), (req, res) => {
+  r.patch('/:id', requirePermission('manageAccounts'), async (req, res) => {
     const { user, scope } = authed(req);
     const db = req.db;
-    const row = loadAccount(db, scope, parseId(req.params.id));
+    const row = await loadAccount(db, scope, parseId(req.params.id));
     const body: Record<string, unknown> = req.body && typeof req.body === 'object' ? req.body : {};
 
     for (const [field, current] of Object.entries(IMMUTABLE_FIELDS)) {
@@ -297,7 +297,7 @@ export function accountRoutes(): Router {
     const contentDiff = diffFields({ name: before.name, handle: before.handle }, { name: input.name, handle: input.handle });
     const activeChanged = input.isActive !== undefined && input.isActive !== before.isActive;
     if (activeChanged && input.isActive) {
-      const brand = get<{ is_active: number }>(db, 'SELECT is_active FROM brands WHERE id = ?', [row.brand_id]);
+      const brand = await get<{ is_active: number }>(db, 'SELECT is_active FROM brands WHERE id = ?', [row.brand_id]);
       if (brand?.is_active !== 1) throw badRequest('此帳號所屬的品牌已停用，無法啟用帳號；請先到品牌管理啟用此品牌');
     }
     if (!contentDiff && !activeChanged) {
@@ -306,8 +306,8 @@ export function accountRoutes(): Router {
     }
 
     const newName = input.name ?? row.name;
-    tx(db, () => {
-      updateById(db, 'social_accounts', row.id, {
+    await tx(db, async () => {
+      await updateById(db, 'social_accounts', row.id, {
         name: contentDiff ? newName : undefined,
         handle: contentDiff ? (input.handle ?? row.handle) : undefined,
         is_active: activeChanged ? input.isActive : undefined,
@@ -315,7 +315,7 @@ export function accountRoutes(): Router {
       });
       if (contentDiff) {
         const labels = Object.keys(contentDiff.after).map((k) => FIELD_LABELS[k] ?? k);
-        audit(db, {
+        await audit(db, {
           actorType: 'user',
           actorUserId: user.id,
           brandId: row.brand_id,
@@ -331,7 +331,7 @@ export function accountRoutes(): Router {
         });
       }
       if (activeChanged) {
-        audit(db, {
+        await audit(db, {
           actorType: 'user',
           actorUserId: user.id,
           brandId: row.brand_id,
@@ -344,15 +344,15 @@ export function accountRoutes(): Router {
         });
       }
     });
-    res.json(toAccount(loadAccount(db, scope, row.id)) satisfies SocialAccount);
+    res.json(toAccount(await loadAccount(db, scope, row.id)) satisfies SocialAccount);
   });
 
   r.post('/:id/test', requirePermission('manageAccounts'), async (req, res) => {
     const { user, scope } = authed(req);
     const db = req.db;
     const id = parseId(req.params.id);
-    const result = await testAndRecord(db, loadAccount(db, scope, id), user);
-    const body: TestConnectionResponse = { ...result, account: toAccount(loadAccount(db, scope, id)) };
+    const result = await testAndRecord(db, await loadAccount(db, scope, id), user);
+    const body: TestConnectionResponse = { ...result, account: toAccount(await loadAccount(db, scope, id)) };
     res.json(body);
   });
 

@@ -16,16 +16,16 @@ export interface BrandScope {
   isAdmin: boolean;
 }
 
-export function computeScope(db: DB, user: AuthUser): BrandScope {
+export async function computeScope(db: DB, user: AuthUser): Promise<BrandScope> {
   if (user.role === 'admin') {
-    const rows = all<{ id: number; is_active: number }>(db, 'SELECT id, is_active FROM brands ORDER BY id');
+    const rows = await all<{ id: number; is_active: number }>(db, 'SELECT id, is_active FROM brands ORDER BY id');
     return {
       brandIds: rows.map((r) => r.id),
       activeBrandIds: rows.filter((r) => r.is_active === 1).map((r) => r.id),
       isAdmin: true,
     };
   }
-  const rows = all<{ id: number }>(
+  const rows = await all<{ id: number }>(
     db,
     `SELECT b.id FROM user_brands ub JOIN brands b ON b.id = ub.brand_id
      WHERE ub.user_id = ? AND b.is_active = 1 ORDER BY b.id`,

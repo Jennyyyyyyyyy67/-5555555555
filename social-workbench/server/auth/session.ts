@@ -15,11 +15,11 @@ export interface AuthUser {
 
 const hashToken = (token: string) => createHash('sha256').update(token).digest('hex');
 
-export function createSession(db: DB, userId: number): { token: string; expiresAt: string } {
+export async function createSession(db: DB, userId: number): Promise<{ token: string; expiresAt: string }> {
   const token = randomBytes(32).toString('hex');
   const now = nowIso();
   const expiresAt = addMinutes(now, config.sessionTtlHours * 60);
-  run(db, `INSERT INTO sessions (token_hash, user_id, created_at, expires_at, last_seen_at) VALUES (?, ?, ?, ?, ?)`, [
+  await run(db, `INSERT INTO sessions (token_hash, user_id, created_at, expires_at, last_seen_at) VALUES (?, ?, ?, ?, ?)`, [
     hashToken(token),
     userId,
     now,
@@ -30,10 +30,10 @@ export function createSession(db: DB, userId: number): { token: string; expiresA
 }
 
 /** 依 token 取得登入者；過期或帳號停用則回傳 null。有效期間會隨使用自動延長（每 5 分鐘最多更新一次）。 */
-export function getSessionUser(db: DB, token: string | undefined): AuthUser | null {
+export async function getSessionUser(db: DB, token: string | undefined): Promise<AuthUser | null> {
   if (!token) return null;
   const tokenHash = hashToken(token);
-  const row = get<{
+  const row = await get<{
     id: number;
     name: string;
     email: string;
@@ -50,11 +50,11 @@ export function getSessionUser(db: DB, token: string | undefined): AuthUser | nu
   if (!row) return null;
   const now = nowIso();
   if (row.expires_at <= now || row.is_active !== 1) {
-    run(db, 'DELETE FROM sessions WHERE token_hash = ?', [tokenHash]);
+    await run(db, 'DELETE FROM sessions WHERE token_hash = ?', [tokenHash]);
     return null;
   }
   if (Date.parse(now) - Date.parse(row.last_seen_at) > 5 * 60_000) {
-    run(db, 'UPDATE sessions SET last_seen_at = ?, expires_at = ? WHERE token_hash = ?', [
+    await run(db, 'UPDATE sessions SET last_seen_at = ?, expires_at = ? WHERE token_hash = ?', [
       now,
       addMinutes(now, config.sessionTtlHours * 60),
       tokenHash,
@@ -63,18 +63,18 @@ export function getSessionUser(db: DB, token: string | undefined): AuthUser | nu
   return { id: row.id, name: row.name, email: row.email, role: row.role, isActive: true };
 }
 
-export function destroySession(db: DB, token: string | undefined): void {
+export async function destroySession(db: DB, token: string | undefined): Promise<void> {
   if (!token) return;
-  run(db, 'DELETE FROM sessions WHERE token_hash = ?', [hashToken(token)]);
+  await run(db, 'DELETE FROM sessions WHERE token_hash = ?', [hashToken(token)]);
 }
 
 /**
  * 登出某人員的所有裝置，回傳刪除的 session 數。
  * exceptToken：保留這個登入狀態（例如管理員重設自己的密碼時，保留目前的裝置）。
  */
-export function destroyUserSessions(db: DB, userId: number, opts: { exceptToken?: string } = {}): number {
+export async function destroyUserSessions(db: DB, userId: number, opts: { exceptToken?: string } = {}): Promise<number> {
   if (opts.exceptToken) {
-    return run(db, 'DELETE FROM sessions WHERE user_id = ? AND token_hash != ?', [userId, hashToken(opts.exceptToken)]).changes;
+    return (await run(db, 'DELETE FROM sessions WHERE user_id = ? AND token_hash != ?', [userId, hashToken(opts.exceptToken)])).changes;
   }
-  return run(db, 'DELETE FROM sessions WHERE user_id = ?', [userId]).changes;
+  return (await run(db, 'DELETE FROM sessions WHERE user_id = ?', [userId])).changes;
 }

@@ -35,13 +35,13 @@ export function parseCookies(header: string | undefined): Record<string, string>
 
 /** 讀取 cookie 中的登入狀態，存在則掛上 req.user 與 req.scope（不強制登入） */
 export function loadUser(): RequestHandler {
-  return (req, _res, next) => {
+  return async (req, _res, next) => {
     const token = parseCookies(req.headers.cookie)[SESSION_COOKIE];
-    const user = getSessionUser(req.db, token);
+    const user = await getSessionUser(req.db, token);
     if (user) {
       req.user = user;
       req.sessionToken = token;
-      req.scope = computeScope(req.db, user);
+      req.scope = await computeScope(req.db, user);
     }
     next();
   };

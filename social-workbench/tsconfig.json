@@ -16,5 +16,5 @@
     "noFallthroughCasesInSwitch": true,
     "types": ["node", "vitest/globals"]
   },
-  "include": ["shared", "server", "web/src", "vite.config.ts", "vitest.config.ts"]
+  "include": ["shared", "server", "scripts", "web/src", "vite.config.ts", "vitest.config.ts"]
 }

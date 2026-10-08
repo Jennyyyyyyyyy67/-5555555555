@@ -15,14 +15,14 @@ import type { MockResetResponse, MockStatsResponse } from '../../shared/types';
 
 const resetSchema = z.object({ confirm: z.literal(true) });
 
-function count(db: DB, table: string): number {
-  return get<{ n: number }>(db, `SELECT COUNT(*) AS n FROM ${table}`)?.n ?? 0;
+async function count(db: DB, table: string): Promise<number> {
+  return (await get<{ n: number }>(db, `SELECT COUNT(*) AS n FROM ${table}`))?.n ?? 0;
 }
 
-function buildStats(db: DB, brandIds: number[]): MockStatsResponse {
-  const seededAt = get<{ value: string | null }>(db, "SELECT value FROM schema_meta WHERE key = 'seeded_at'")?.value ?? null;
+async function buildStats(db: DB, brandIds: number[]): Promise<MockStatsResponse> {
+  const seededAt = (await get<{ value: string | null }>(db, "SELECT value FROM schema_meta WHERE key = 'seeded_at'"))?.value ?? null;
 
-  const brands = all<{ id: number; name: string; color: string; accounts: number; posts: number; comments: number }>(
+  const brands = await all<{ id: number; name: string; color: string; accounts: number; posts: number; comments: number }>(
     db,
     `SELECT b.id, b.name, b.color,
        (SELECT COUNT(*) FROM social_accounts sa WHERE sa.brand_id = b.id) AS accounts,
@@ -30,14 +30,14 @@ function buildStats(db: DB, brandIds: number[]): MockStatsResponse {
        (SELECT COUNT(*) FROM comments c WHERE c.brand_id = b.id) AS comments
      FROM brands b WHERE ${sqlIn('b.id', brandIds)} ORDER BY b.id`,
   );
-  const byPlatform = all<{ brand_id: number; platform: string; n: number }>(
+  const byPlatform = await all<{ brand_id: number; platform: string; n: number }>(
     db,
     `SELECT c.brand_id, sa.platform, COUNT(*) AS n
      FROM comments c JOIN social_accounts sa ON sa.id = c.social_account_id
      WHERE ${sqlIn('c.brand_id', brandIds)}
      GROUP BY c.brand_id, sa.platform ORDER BY sa.platform`,
   );
-  const byStatus = all<{ brand_id: number; status: CommentStatus; n: number }>(
+  const byStatus = await all<{ brand_id: number; status: CommentStatus; n: number }>(
     db,
     `SELECT c.brand_id, c.status, COUNT(*) AS n FROM comments c
      WHERE ${sqlIn('c.brand_id', brandIds)} GROUP BY c.brand_id, c.status`,
@@ -46,13 +46,13 @@ function buildStats(db: DB, brandIds: number[]): MockStatsResponse {
   return {
     seededAt,
     totals: {
-      brands: count(db, 'brands'),
-      users: count(db, 'users'),
-      accounts: count(db, 'social_accounts'),
-      posts: count(db, 'posts'),
-      comments: count(db, 'comments'),
-      replies: count(db, 'replies'),
-      auditLogs: count(db, 'audit_logs'),
+      brands: await count(db, 'brands'),
+      users: await count(db, 'users'),
+      accounts: await count(db, 'social_accounts'),
+      posts: await count(db, 'posts'),
+      comments: await count(db, 'comments'),
+      replies: await count(db, 'replies'),
+      auditLogs: await count(db, 'audit_logs'),
     },
     byBrand: brands.map((b) => {
       const platforms: Record<string, number> = {};
@@ -77,13 +77,13 @@ export function mockRoutes(): Router {
   const r = Router();
 
   // 資料量統計（只有管理員可看；管理員的品牌範圍即為全部品牌）
-  r.get('/stats', requirePermission('manageMockData'), (req: Request, res: Response) => {
+  r.get('/stats', requirePermission('manageMockData'), async (req: Request, res: Response) => {
     const { scope } = authed(req);
-    res.json(buildStats(req.db, scope.brandIds));
+    res.json(await buildStats(req.db, scope.brandIds));
   });
 
   // 清空所有資料並重新建立示範資料
-  r.post('/reset', requirePermission('manageMockData'), (req: Request, res: Response) => {
+  r.post('/reset', requirePermission('manageMockData'), async (req: Request, res: Response) => {
     const { user } = authed(req);
     if (!resetSchema.safeParse(req.body ?? {}).success) {
       throw badRequest('請確認要重設示範資料：重設會清空所有資料，確認後請再送出一次');
@@ -93,22 +93,22 @@ export function mockRoutes(): Router {
 
     // resetAndSeed 會 DROP 所有資料表（含 sessions、users）後重建，不能包在外層交易中
     // （交易中無法關閉外鍵檢查）；示範資料本身在 resetAndSeed 內以交易建立。
-    const summary = resetAndSeed(db);
+    const summary = await resetAndSeed(db);
     resetAllLoginFailures();
 
     // 舊的 session 已隨資料表一起清除；若同一個 Email 仍存在於示範資料中，就幫他建立新的登入狀態
-    const row = get<{ id: number; name: string; email: string; role: AuthUser['role']; is_active: number }>(
+    const row = await get<{ id: number; name: string; email: string; role: AuthUser['role']; is_active: number }>(
       db,
-      'SELECT id, name, email, role, is_active FROM users WHERE email = ? COLLATE NOCASE',
+      'SELECT id, name, email, role, is_active FROM users WHERE lower(email) = lower(?)',
       [requester.email],
     );
     const newUser: AuthUser | null =
       row && row.is_active === 1 ? { id: row.id, name: row.name, email: row.email, role: row.role, isActive: true } : null;
 
-    const session = tx(db, () => {
+    const session = await tx(db, async () => {
       if (newUser) {
-        const s = createSession(db, newUser.id);
-        audit(db, {
+        const s = await createSession(db, newUser.id);
+        await audit(db, {
           actorType: 'user',
           actorUserId: newUser.id,
           action: 'mock.reset',
@@ -118,7 +118,7 @@ export function mockRoutes(): Router {
         });
         return s;
       }
-      audit(db, {
+      await audit(db, {
         actorType: 'system',
         action: 'mock.reset',
         targetType: 'system',
@@ -130,7 +130,7 @@ export function mockRoutes(): Router {
 
     if (newUser && session) {
       setSessionCookie(res, session.token, session.expiresAt);
-      const body: MockResetResponse = { summary, me: buildMe(db, newUser, computeScope(db, newUser)) };
+      const body: MockResetResponse = { summary, me: await buildMe(db, newUser, await computeScope(db, newUser)) };
       res.json(body);
       return;
     }

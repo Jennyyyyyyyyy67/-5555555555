@@ -3,31 +3,31 @@ import { createTestContext } from '../test/helpers';
 import { audit } from '../services/audit';
 import type { AuditLogEntry } from '../../shared/types';
 
-type Ctx = ReturnType<typeof createTestContext>;
+type Ctx = Awaited<ReturnType<typeof createTestContext>>;
 
 /** 建立幾筆不同品牌、不同執行者的操作紀錄（時間早於登入紀錄） */
-function seedLogs(ctx: Ctx) {
+async function seedLogs(ctx: Ctx) {
   const { fx, db } = ctx;
   return {
-    brandAByAdmin: audit(db, {
+    brandAByAdmin: await audit(db, {
       actorType: 'user', actorUserId: fx.admin, brandId: fx.brandA, action: 'brand.update', targetType: 'brand', targetId: fx.brandA,
       summary: '修改品牌「品牌甲」', before: { color: '#000000' }, after: { color: '#123456' }, createdAt: '2026-01-01T01:00:00.000Z',
     }),
-    brandBByAdmin: audit(db, {
+    brandBByAdmin: await audit(db, {
       actorType: 'user', actorUserId: fx.admin, brandId: fx.brandB, action: 'brand.update', targetType: 'brand', targetId: fx.brandB,
       summary: '修改品牌「品牌乙」', createdAt: '2026-01-01T02:00:00.000Z',
     }),
-    brandBByOpB: audit(db, {
+    brandBByOpB: await audit(db, {
       actorType: 'user', actorUserId: fx.opB, brandId: fx.brandB, action: 'comment.reply', summary: '乙操作回覆留言',
       createdAt: '2026-01-01T03:00:00.000Z',
     }),
-    systemNoBrand: audit(db, {
+    systemNoBrand: await audit(db, {
       actorType: 'system', action: 'mock.reset', summary: '重設示範資料', detail: { brands: 2 }, createdAt: '2026-01-01T04:00:00.000Z',
     }),
-    supNoBrand: audit(db, {
+    supNoBrand: await audit(db, {
       actorType: 'user', actorUserId: fx.sup, action: 'user.update_self', summary: '主管修改個人資料', createdAt: '2026-01-01T05:00:00.000Z',
     }),
-    brandAByAi: audit(db, {
+    brandAByAi: await audit(db, {
       actorType: 'ai', brandId: fx.brandA, action: 'comment.analyze', summary: 'AI 判斷留言類型', createdAt: '2026-01-01T06:00:00.000Z',
     }),
   };
@@ -38,15 +38,15 @@ const isSortedDesc = (list: AuditLogEntry[]) =>
 
 describe('GET /api/audit/recent', () => {
   it('操作人員回傳 403；未登入回傳 401', async () => {
-    const ctx = createTestContext();
+    const ctx = await createTestContext();
     const agent = await ctx.loginAs('opA');
     expect((await agent.get('/api/audit/recent')).status).toBe(403);
     expect((await request(ctx.app).get('/api/audit/recent')).status).toBe(401);
   });
 
   it('管理員看到全部紀錄，由新到舊，並帶出執行者與品牌名稱', async () => {
-    const ctx = createTestContext();
-    const ids = seedLogs(ctx);
+    const ctx = await createTestContext();
+    const ids = await seedLogs(ctx);
     const agent = await ctx.loginAs('admin');
     const res = await agent.get('/api/audit/recent').query({ limit: 100 });
     expect(res.status).toBe(200);
@@ -77,8 +77,8 @@ describe('GET /api/audit/recent', () => {
   });
 
   it('主管只看到負責品牌的紀錄與自己的操作', async () => {
-    const ctx = createTestContext();
-    const ids = seedLogs(ctx);
+    const ctx = await createTestContext();
+    const ids = await seedLogs(ctx);
     await ctx.loginAs('opB'); // 其他人的登入紀錄（無品牌）不應出現
     const agent = await ctx.loginAs('sup');
     const res = await agent.get('/api/audit/recent').query({ limit: 100 });
@@ -99,9 +99,9 @@ describe('GET /api/audit/recent', () => {
   });
 
   it('limit 預設 20、最多 100；格式不正確回傳 400', async () => {
-    const ctx = createTestContext();
+    const ctx = await createTestContext();
     for (let i = 0; i < 105; i++) {
-      audit(ctx.db, { actorType: 'system', action: 'test.bulk', summary: `測試 ${i}`, createdAt: '2026-01-01T00:00:00.000Z' });
+      await audit(ctx.db, { actorType: 'system', action: 'test.bulk', summary: `測試 ${i}`, createdAt: '2026-01-01T00:00:00.000Z' });
     }
     const agent = await ctx.loginAs('admin');
     expect((await agent.get('/api/audit/recent')).body).toHaveLength(20);

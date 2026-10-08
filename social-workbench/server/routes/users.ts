@@ -81,15 +81,15 @@ interface UserDbRow {
 const USER_COLUMNS = 'u.id, u.name, u.email, u.role, u.is_active, u.last_login_at, u.created_at, u.updated_at';
 const ROLE_ORDER_SQL = "CASE u.role WHEN 'admin' THEN 0 WHEN 'supervisor' THEN 1 ELSE 2 END";
 
-function loadUser(db: DB, id: number): UserDbRow | undefined {
-  return get<UserDbRow>(db, `SELECT ${USER_COLUMNS} FROM users u WHERE u.id = ?`, [id]);
+async function loadUser(db: DB, id: number): Promise<UserDbRow | undefined> {
+  return await get<UserDbRow>(db, `SELECT ${USER_COLUMNS} FROM users u WHERE u.id = ?`, [id]);
 }
 
 /** 一次讀出多位人員的授權品牌（依品牌 id 排序） */
-function loadBrandIds(db: DB, userIds: number[]): Map<number, number[]> {
+async function loadBrandIds(db: DB, userIds: number[]): Promise<Map<number, number[]>> {
   const map = new Map<number, number[]>();
   if (userIds.length === 0) return map;
-  const rows = all<{ user_id: number; brand_id: number }>(
+  const rows = await all<{ user_id: number; brand_id: number }>(
     db,
     `SELECT user_id, brand_id FROM user_brands WHERE ${sqlIn('user_id', userIds)} ORDER BY brand_id`,
   );
@@ -120,20 +120,20 @@ function toUserRow(row: UserDbRow, brandIds: number[], viewer: BrandScope): User
   };
 }
 
-function buildUserRow(db: DB, id: number, viewer: BrandScope): UserRow {
-  const row = loadUser(db, id);
+async function buildUserRow(db: DB, id: number, viewer: BrandScope): Promise<UserRow> {
+  const row = await loadUser(db, id);
   if (!row) throw notFound('找不到此人員，可能已被移除，請重新整理頁面');
-  return toUserRow(row, loadBrandIds(db, [id]).get(id) ?? [], viewer);
+  return toUserRow(row, (await loadBrandIds(db, [id])).get(id) ?? [], viewer);
 }
 
 /** 確認品牌都存在，回傳 id → 名稱 */
-function loadBrandNames(db: DB, ids: number[]): Map<number, string> {
-  const rows = all<{ id: number; name: string }>(db, `SELECT id, name FROM brands WHERE ${sqlIn('id', ids)} ORDER BY id`);
+async function loadBrandNames(db: DB, ids: number[]): Promise<Map<number, string>> {
+  const rows = await all<{ id: number; name: string }>(db, `SELECT id, name FROM brands WHERE ${sqlIn('id', ids)} ORDER BY id`);
   return new Map(rows.map((r) => [r.id, r.name]));
 }
 
-function assertBrandsExist(db: DB, ids: number[]): Map<number, string> {
-  const names = loadBrandNames(db, ids);
+async function assertBrandsExist(db: DB, ids: number[]): Promise<Map<number, string>> {
+  const names = await loadBrandNames(db, ids);
   if (ids.some((id) => !names.has(id))) {
     throw new HttpError(400, 'validation_error', '找不到部分授權品牌，可能已被移除，請重新整理頁面後再選擇', { field: 'brandIds' });
   }
@@ -144,8 +144,8 @@ const uniqSorted = (ids: number[]) => [...new Set(ids)].sort((a, b) => a - b);
 const sameIds = (a: number[], b: number[]) => a.length === b.length && a.every((v, i) => v === b[i]);
 const brandListText = (names: string[]) => (names.length ? names.join('、') : '（無）');
 
-function countOtherActiveAdmins(db: DB, excludeId: number): number {
-  const row = get<{ n: number }>(db, "SELECT COUNT(*) AS n FROM users WHERE role = 'admin' AND is_active = 1 AND id != ?", [
+async function countOtherActiveAdmins(db: DB, excludeId: number): Promise<number> {
+  const row = await get<{ n: number }>(db, "SELECT COUNT(*) AS n FROM users WHERE role = 'admin' AND is_active = 1 AND id != ?", [
     excludeId,
   ]);
   return row?.n ?? 0;
@@ -156,7 +156,7 @@ export function userRoutes(): Router {
   const r = Router();
 
   // 人員列表：管理員看全部；主管只看與自己負責品牌相關的非管理員人員（含自己）
-  r.get('/', requirePermission('viewUsers'), (req: Request, res: Response) => {
+  r.get('/', requirePermission('viewUsers'), async (req: Request, res: Response) => {
     const { user, scope } = authed(req);
     const db = req.db;
     const explicitBrand = req.query.brand !== undefined && req.query.brand !== '' && req.query.brand !== 'all';
@@ -172,13 +172,13 @@ export function userRoutes(): Router {
       where = `u.role != 'admin' AND (u.id = :self OR ${hasBrand})`;
       params.self = user.id;
     }
-    const rows = all<UserDbRow>(
+    const rows = await all<UserDbRow>(
       db,
       `SELECT ${USER_COLUMNS} FROM users u WHERE ${where}
-       ORDER BY u.is_active DESC, ${ROLE_ORDER_SQL}, u.name COLLATE NOCASE, u.id`,
+       ORDER BY u.is_active DESC, ${ROLE_ORDER_SQL}, lower(u.name), u.id`,
       params,
     );
-    const brandMap = loadBrandIds(
+    const brandMap = await loadBrandIds(
       db,
       rows.map((u) => u.id),
     );
@@ -186,39 +186,39 @@ export function userRoutes(): Router {
   });
 
   // 人員名錄：指定品牌中可處理留言的啟用中人員（管理員＋被授權者）。必須放在 /:id 類路由之前。
-  r.get('/directory', (req: Request, res: Response) => {
+  r.get('/directory', async (req: Request, res: Response) => {
     const { scope } = authed(req);
     const raw = req.query.brand;
     if (raw === undefined || raw === '' || raw === 'all') throw badRequest('請指定品牌後再查詢人員名錄');
     const brandId = Number(raw);
     if (!Number.isSafeInteger(brandId) || brandId <= 0) throw badRequest('品牌參數不正確');
     assertBrandAccess(scope, brandId);
-    const rows = all<{ id: number; name: string; role: Role }>(
+    const rows = await all<{ id: number; name: string; role: Role }>(
       req.db,
       `SELECT u.id, u.name, u.role FROM users u
        WHERE u.is_active = 1
          AND (u.role = 'admin' OR EXISTS (SELECT 1 FROM user_brands ub WHERE ub.user_id = u.id AND ub.brand_id = :brandId))
-       ORDER BY ${ROLE_ORDER_SQL}, u.name COLLATE NOCASE, u.id`,
+       ORDER BY ${ROLE_ORDER_SQL}, lower(u.name), u.id`,
       { brandId },
     );
     res.json(rows.map((u) => ({ id: u.id, name: u.name, role: u.role })) satisfies UserDirectoryEntry[]);
   });
 
   // 新增人員
-  r.post('/', requirePermission('manageUsers'), (req: Request, res: Response) => {
+  r.post('/', requirePermission('manageUsers'), async (req: Request, res: Response) => {
     const { user, scope } = authed(req);
     const db = req.db;
     const input = createSchema.parse(req.body ?? {});
     // 管理員可存取全部品牌，不儲存授權品牌
     const brandIds = input.role === 'admin' ? [] : uniqSorted(input.brandIds);
-    const brandNames = assertBrandsExist(db, brandIds);
-    if (get(db, 'SELECT id FROM users WHERE email = ? COLLATE NOCASE', [input.email])) {
+    const brandNames = await assertBrandsExist(db, brandIds);
+    if (await get(db, 'SELECT id FROM users WHERE lower(email) = lower(?)', [input.email])) {
       throw conflict('此 Email 已被使用，請改用其他 Email 或編輯既有人員', { field: 'email' });
     }
 
-    const id = tx(db, () => {
+    const id = await tx(db, async () => {
       const now = nowIso();
-      const newId = insert(db, 'users', {
+      const newId = await insert(db, 'users', {
         name: input.name,
         email: input.email,
         role: input.role,
@@ -227,9 +227,9 @@ export function userRoutes(): Router {
         created_at: now,
         updated_at: now,
       });
-      for (const b of brandIds) insert(db, 'user_brands', { user_id: newId, brand_id: b, created_at: now });
+      for (const b of brandIds) await insert(db, 'user_brands', { user_id: newId, brand_id: b, created_at: now });
       const names = brandIds.map((b) => brandNames.get(b)!);
-      audit(db, {
+      await audit(db, {
         actorType: 'user',
         actorUserId: user.id,
         action: 'user.create',
@@ -248,16 +248,16 @@ export function userRoutes(): Router {
       });
       return newId;
     });
-    res.status(201).json(buildUserRow(db, id, scope));
+    res.status(201).json(await buildUserRow(db, id, scope));
   });
 
   // 編輯人員：姓名、角色、授權品牌、啟用狀態
-  r.patch('/:id', requirePermission('manageUsers'), (req: Request, res: Response) => {
+  r.patch('/:id', requirePermission('manageUsers'), async (req: Request, res: Response) => {
     const { user, scope } = authed(req);
     const db = req.db;
     const id = parseId(req.params.id);
     const input = patchSchema.parse(req.body ?? {});
-    const current = loadUser(db, id);
+    const current = await loadUser(db, id);
     if (!current) throw notFound('找不到此人員，可能已被移除，請重新整理頁面');
 
     if (input.email !== undefined) {
@@ -272,7 +272,7 @@ export function userRoutes(): Router {
 
     // 系統至少需要一位啟用中的管理員
     const losesAdmin = current.role === 'admin' && wasActive && (nextRole !== 'admin' || !nextActive);
-    if (losesAdmin && countOtherActiveAdmins(db, id) === 0) {
+    if (losesAdmin && await countOtherActiveAdmins(db, id) === 0) {
       throw badRequest('系統至少需要一位啟用中的管理員。請先將其他人員設為管理員，再調整此帳號');
     }
     if (id === user.id) {
@@ -280,9 +280,9 @@ export function userRoutes(): Router {
       if (nextRole !== current.role) throw badRequest('不能變更自己的角色；如需調整，請由其他管理員操作');
     }
 
-    const oldBrandIds = loadBrandIds(db, [id]).get(id) ?? [];
+    const oldBrandIds = (await loadBrandIds(db, [id])).get(id) ?? [];
     const nextBrandIds = nextRole === 'admin' ? [] : input.brandIds !== undefined ? uniqSorted(input.brandIds) : oldBrandIds;
-    const brandNames = assertBrandsExist(db, uniqSorted([...oldBrandIds, ...nextBrandIds]));
+    const brandNames = await assertBrandsExist(db, uniqSorted([...oldBrandIds, ...nextBrandIds]));
 
     const nameChanged = nextName !== current.name;
     const roleChanged = nextRole !== current.role;
@@ -290,9 +290,9 @@ export function userRoutes(): Router {
     const activeChanged = nextActive !== wasActive;
 
     if (nameChanged || roleChanged || brandsChanged || activeChanged) {
-      tx(db, () => {
+      await tx(db, async () => {
         const now = nowIso();
-        updateById(db, 'users', id, {
+        await updateById(db, 'users', id, {
           name: nameChanged ? nextName : undefined,
           role: roleChanged ? nextRole : undefined,
           is_active: activeChanged ? nextActive : undefined,
@@ -302,14 +302,14 @@ export function userRoutes(): Router {
         if (brandsChanged) {
           const removed = oldBrandIds.filter((b) => !nextBrandIds.includes(b));
           const added = nextBrandIds.filter((b) => !oldBrandIds.includes(b));
-          if (removed.length) run(db, `DELETE FROM user_brands WHERE user_id = ? AND ${sqlIn('brand_id', removed)}`, [id]);
-          for (const b of added) insert(db, 'user_brands', { user_id: id, brand_id: b, created_at: now });
+          if (removed.length) await run(db, `DELETE FROM user_brands WHERE user_id = ? AND ${sqlIn('brand_id', removed)}`, [id]);
+          for (const b of added) await insert(db, 'user_brands', { user_id: id, brand_id: b, created_at: now });
         }
 
         const base = { actorType: 'user' as const, actorUserId: user.id, targetType: 'user', targetId: id };
 
         if (nameChanged) {
-          audit(db, {
+          await audit(db, {
             ...base,
             action: 'user.update',
             summary: `將人員「${current.name}」更名為「${nextName}」`,
@@ -338,7 +338,7 @@ export function userRoutes(): Router {
             before.brands = oldBrandIds.map((b) => brandNames.get(b)!);
             after.brands = nextBrandIds.map((b) => brandNames.get(b)!);
           }
-          audit(db, {
+          await audit(db, {
             ...base,
             action: 'user.permissions_change',
             summary: `調整「${nextName}」的權限：${parts.join('；')}`,
@@ -352,7 +352,7 @@ export function userRoutes(): Router {
         }
 
         if (activeChanged) {
-          audit(db, {
+          await audit(db, {
             ...base,
             action: nextActive ? 'user.activate' : 'user.deactivate',
             summary: nextActive ? `重新啟用人員「${nextName}」` : `停用人員「${nextName}」，已登出其所有裝置`,
@@ -360,28 +360,28 @@ export function userRoutes(): Router {
             after: { isActive: nextActive },
           });
           // 停用後立即登出所有裝置
-          if (!nextActive) destroyUserSessions(db, id);
+          if (!nextActive) await destroyUserSessions(db, id);
         }
       });
     }
 
-    res.json(buildUserRow(db, id, scope));
+    res.json(await buildUserRow(db, id, scope));
   });
 
   // 重設密碼：登出此人員的其他裝置（若是重設自己的密碼，保留目前這個登入狀態）
-  r.post('/:id/reset-password', requirePermission('manageUsers'), (req: Request, res: Response) => {
+  r.post('/:id/reset-password', requirePermission('manageUsers'), async (req: Request, res: Response) => {
     const { user } = authed(req);
     const db = req.db;
     const id = parseId(req.params.id);
     const { password } = resetPasswordSchema.parse(req.body ?? {});
-    const target = loadUser(db, id);
+    const target = await loadUser(db, id);
     if (!target) throw notFound('找不到此人員，可能已被移除，請重新整理頁面');
 
-    tx(db, () => {
-      updateById(db, 'users', id, { password_hash: hashPassword(password), updated_at: nowIso() });
+    await tx(db, async () => {
+      await updateById(db, 'users', id, { password_hash: hashPassword(password), updated_at: nowIso() });
       // 重設自己的密碼時保留目前這個登入狀態，只登出其他裝置
-      const revoked = destroyUserSessions(db, id, { exceptToken: id === user.id ? req.sessionToken : undefined });
-      audit(db, {
+      const revoked = await destroyUserSessions(db, id, { exceptToken: id === user.id ? req.sessionToken : undefined });
+      await audit(db, {
         actorType: 'user',
         actorUserId: user.id,
         action: 'user.reset_password',

@@ -2,7 +2,8 @@
 
 ## 技術與指令
 
-- 後端：Node.js 22.13+（使用內建 `node:sqlite`）、Express 5、zod 3、TypeScript（以 `tsx` 執行，不需編譯）
+- 後端：Node.js 20.18+、Express 5、zod 3、TypeScript（本機以 `tsx` 執行）
+- 資料庫：Postgres。雲端（Vercel）用 `DATABASE_URL`；本機與測試沒設定時自動使用 PGlite（內嵌 Postgres，資料在 `data/pglite`）
 - 前端：React 19、react-router-dom 7、Vite 8，純 CSS（`web/src/styles.css` 的 tokens 與 class）
 - 測試：vitest + supertest（`server/**/*.test.ts`）
 
@@ -79,10 +80,12 @@ export function brandRoutes(): Router {
 
 - `all / get / run(db, sql, params)`：具名參數 `:name` + 物件，或 `?` + 陣列。
 - `insert(db, table, row)` 回傳新 id；`updateById(db, table, id, patch)`。
-- 這些輔助函式會自動把 boolean 轉 0/1、undefined 轉 null、物件/陣列轉 JSON 字串。**直接用 `db.prepare()` 時不會轉換，傳 boolean 會出錯。**
+- **全部都是非同步的，一定要 `await`**（漏掉 await 不會有型別錯誤，但資料不會寫入或順序錯亂）。
+- SQL 仍可用 `?` 或 `:name` 寫參數，輔助函式會轉成 Postgres 的 `$1`；也會自動把 boolean 轉 0/1、undefined 轉 null、物件/陣列轉 JSON 字串。
+- Postgres 注意事項：不分大小寫比對用 `lower(x) = lower(?)`、搜尋用 `ILIKE`；`INSERT ... SELECT ?` 這類無法推斷型別的參數要加 `?::integer` 等轉型。
 - `sqlIn(column, ids)` 產生安全的 `IN (...)`；ids 空陣列時回傳 `0 = 1`。
 - `parseJson(text, fallback)` 讀 JSON 欄位、`bool(v)` 讀 0/1 欄位。
-- `tx(db, fn)` 交易，可巢狀；fn 必須同步。
+- `await tx(db, async () => { ... })` 交易，可巢狀（內層用 SAVEPOINT）；交易內用輔助函式執行的查詢會自動走同一條連線。
 
 ### 操作紀錄（不可妥協）
 

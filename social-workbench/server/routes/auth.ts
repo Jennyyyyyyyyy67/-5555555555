@@ -13,8 +13,8 @@ import { nowIso } from '../lib/clock';
 import { DEMO_PASSWORD, DEMO_USERS } from '../seed/demo';
 import type { BrandSummary, DemoAccountsResponse, MeResponse } from '../../shared/types';
 
-export function buildMe(db: DB, user: AuthUser, scope: BrandScope): MeResponse {
-  const rows = all<{ id: number; name: string; code: string; color: string; is_active: number }>(
+export async function buildMe(db: DB, user: AuthUser, scope: BrandScope): Promise<MeResponse> {
+  const rows = await all<{ id: number; name: string; code: string; color: string; is_active: number }>(
     db,
     `SELECT id, name, code, color, is_active FROM brands WHERE ${sqlIn('id', scope.brandIds)} ORDER BY id`,
   );
@@ -46,20 +46,20 @@ const loginSchema = z.object({
 export function authRoutes(): Router {
   const r = Router();
 
-  r.post('/login', (req: Request, res: Response) => {
+  r.post('/login', async (req: Request, res: Response) => {
     const { email, password } = loginSchema.parse(req.body);
     const db = req.db;
     if (isLoginLocked(email)) {
       throw new HttpError(429, 'too_many_attempts', '登入失敗次數過多，請 10 分鐘後再試');
     }
-    const row = get<{ id: number; name: string; email: string; role: AuthUser['role']; is_active: number; password_hash: string }>(
+    const row = await get<{ id: number; name: string; email: string; role: AuthUser['role']; is_active: number; password_hash: string }>(
       db,
-      'SELECT id, name, email, role, is_active, password_hash FROM users WHERE email = ? COLLATE NOCASE',
+      'SELECT id, name, email, role, is_active, password_hash FROM users WHERE lower(email) = lower(?)',
       [email],
     );
     if (!row || row.is_active !== 1 || !verifyPassword(password, row.password_hash)) {
       recordLoginFailure(email);
-      audit(db, {
+      await audit(db, {
         actorType: 'system',
         action: 'auth.login_failed',
         targetType: 'user',
@@ -71,9 +71,9 @@ export function authRoutes(): Router {
     }
     clearLoginFailures(email);
     const user: AuthUser = { id: row.id, name: row.name, email: row.email, role: row.role, isActive: true };
-    const session = createSession(db, user.id);
-    run(db, 'UPDATE users SET last_login_at = ? WHERE id = ?', [nowIso(), user.id]);
-    audit(db, {
+    const session = await createSession(db, user.id);
+    await run(db, 'UPDATE users SET last_login_at = ? WHERE id = ?', [nowIso(), user.id]);
+    await audit(db, {
       actorType: 'user',
       actorUserId: user.id,
       action: 'auth.login',
@@ -82,12 +82,12 @@ export function authRoutes(): Router {
       summary: `${user.name} 登入`,
     });
     setSessionCookie(res, session.token, session.expiresAt);
-    res.json(buildMe(db, user, computeScope(db, user)));
+    res.json(await buildMe(db, user, await computeScope(db, user)));
   });
 
-  r.post('/logout', (req: Request, res: Response) => {
+  r.post('/logout', async (req: Request, res: Response) => {
     if (req.user) {
-      audit(req.db, {
+      await audit(req.db, {
         actorType: 'user',
         actorUserId: req.user.id,
         action: 'auth.logout',
@@ -96,39 +96,40 @@ export function authRoutes(): Router {
         summary: `${req.user.name} 登出`,
       });
     }
-    destroySession(req.db, req.sessionToken);
+    await destroySession(req.db, req.sessionToken);
     res.clearCookie(SESSION_COOKIE, { path: '/' });
     res.status(204).end();
   });
 
-  r.get('/me', requireAuth(), (req: Request, res: Response) => {
+  r.get('/me', requireAuth(), async (req: Request, res: Response) => {
     const { user, scope } = authed(req);
-    res.json(buildMe(req.db, user, scope));
+    res.json(await buildMe(req.db, user, scope));
   });
 
   // 示範模式：列出示範帳號（只列出目前仍存在且啟用的帳號）
-  r.get('/demo-accounts', (req: Request, res: Response) => {
+  r.get('/demo-accounts', async (req: Request, res: Response) => {
     if (!config.demoMode) {
       res.json({ enabled: false, accounts: [] } satisfies DemoAccountsResponse);
       return;
     }
-    const accounts = DEMO_USERS.flatMap((d) => {
-      const u = get<{ id: number; name: string; role: AuthUser['role']; is_active: number }>(
+    const accounts: DemoAccountsResponse['accounts'] = [];
+    for (const d of DEMO_USERS) {
+      const u = await get<{ id: number; name: string; role: AuthUser['role']; is_active: number }>(
         req.db,
-        'SELECT id, name, role, is_active FROM users WHERE email = ? COLLATE NOCASE',
+        'SELECT id, name, role, is_active FROM users WHERE lower(email) = lower(?)',
         [d.email],
       );
-      if (!u || u.is_active !== 1) return [];
+      if (!u || u.is_active !== 1) continue;
       const brandNames =
         u.role === 'admin'
           ? ['全部品牌']
-          : all<{ name: string }>(
+          : (await all<{ name: string }>(
               req.db,
               `SELECT b.name FROM user_brands ub JOIN brands b ON b.id = ub.brand_id WHERE ub.user_id = ? AND b.is_active = 1 ORDER BY b.id`,
               [u.id],
-            ).map((b) => b.name);
-      return [{ email: d.email, password: DEMO_PASSWORD, name: u.name, role: u.role, brandNames }];
-    });
+            )).map((b) => b.name);
+      accounts.push({ email: d.email, password: DEMO_PASSWORD, name: u.name, role: u.role, brandNames });
+    }
     res.json({ enabled: true, accounts } satisfies DemoAccountsResponse);
   });
 

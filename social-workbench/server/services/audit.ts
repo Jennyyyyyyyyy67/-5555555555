@@ -30,10 +30,10 @@ export interface AuditEntry {
  * 寫入一筆操作紀錄。所有重要操作都必須呼叫；操作紀錄只能新增，不可修改或刪除。
  * 請在與實際資料異動相同的 tx() 中呼叫，確保兩者一起成功或一起失敗。
  */
-export function audit(db: DB, e: AuditEntry): number {
+export async function audit(db: DB, e: AuditEntry): Promise<number> {
   if (e.actorType === 'user' && !e.actorUserId) throw new Error('人員操作的紀錄必須帶 actorUserId');
   if (e.actorType === 'rule' && !e.ruleId) throw new Error('規則操作的紀錄必須帶 ruleId');
-  return insert(db, 'audit_logs', {
+  return await insert(db, 'audit_logs', {
     brand_id: e.brandId ?? null,
     comment_id: e.commentId ?? null,
     actor_type: e.actorType,

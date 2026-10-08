@@ -1,5 +1,5 @@
 import type { DB } from '../db';
-import { resetDatabase, tx } from '../db';
+import { get, resetDatabase, tx } from '../db';
 import { seedDemoData, type SeedSummary } from './demoData';
 import { mockFeed } from '../adapters/mock/mockFeed';
 
@@ -11,13 +11,13 @@ export interface SeedOptions {
 }
 
 /** 清空整個資料庫並重新建立示範資料 */
-export function resetAndSeed(db: DB, opts: SeedOptions = {}): SeedSummary {
-  resetDatabase(db);
+export async function resetAndSeed(db: DB, opts: SeedOptions = {}): Promise<SeedSummary> {
+  await resetDatabase(db);
   mockFeed.clear();
-  return tx(db, () => seedDemoData(db, { now: opts.now ?? new Date() }));
+  return await tx(db, async () => await seedDemoData(db, { now: opts.now ?? new Date() }));
 }
 
-export function hasAnyUser(db: DB): boolean {
-  const row = db.prepare('SELECT COUNT(*) AS n FROM users').get() as { n: number };
-  return row.n > 0;
+export async function hasAnyUser(db: DB): Promise<boolean> {
+  const row = await get<{ n: number }>(db, 'SELECT COUNT(*) AS n FROM users');
+  return (row?.n ?? 0) > 0;
 }

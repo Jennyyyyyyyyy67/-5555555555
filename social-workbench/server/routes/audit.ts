@@ -59,11 +59,11 @@ export function auditRoutes(): Router {
   const r = Router();
 
   // 最近的操作紀錄。管理員：全部；主管：負責品牌的紀錄 + 自己的操作
-  r.get('/recent', requirePermission('viewAuditLogs'), (req: Request, res: Response) => {
+  r.get('/recent', requirePermission('viewAuditLogs'), async (req: Request, res: Response) => {
     const { user, scope } = authed(req);
     const limit = parseLimit(req.query.limit);
     const where = scope.isAdmin ? '1 = 1' : `(${sqlIn('a.brand_id', scope.brandIds)} OR a.actor_user_id = :self)`;
-    const rows = all<AuditRow>(
+    const rows = await all<AuditRow>(
       req.db,
       `SELECT a.id, a.brand_id, b.name AS brand_name, a.comment_id, a.actor_type, a.actor_user_id, u.name AS actor_name,
          a.rule_id, a.action, a.target_type, a.target_id, a.summary, a.before, a.after, a.detail, a.created_at

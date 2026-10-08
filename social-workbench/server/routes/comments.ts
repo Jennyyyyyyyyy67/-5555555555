@@ -122,7 +122,7 @@ export function commentRoutes(): Router {
   const r = Router();
 
   // 階段 1 收件匣預覽：依品牌範圍列出留言（只含啟用中的品牌）
-  r.get('/preview', requirePermission('handleComments'), (req: Request, res: Response) => {
+  r.get('/preview', requirePermission('handleComments'), async (req: Request, res: Response) => {
     const { scope } = authed(req);
     const brandIds = resolveBrandFilter(scope, req.query.brand).filter((id) => scope.activeBrandIds.includes(id));
 
@@ -163,19 +163,21 @@ export function commentRoutes(): Router {
       params.accountId = accountId;
     }
     if (q !== undefined) {
-      where.push("(c.body LIKE :q ESCAPE '\\' OR c.author_name LIKE :q ESCAPE '\\')");
+      where.push("(c.body ILIKE :q ESCAPE '\\' OR c.author_name ILIKE :q ESCAPE '\\')");
       params.q = likePattern(q);
     }
     const whereSql = where.join(' AND ');
 
     const total =
-      get<{ n: number }>(
-        req.db,
-        `SELECT COUNT(*) AS n FROM comments c JOIN social_accounts sa ON sa.id = c.social_account_id WHERE ${whereSql}`,
-        params,
+      (
+        await get<{ n: number }>(
+          req.db,
+          `SELECT COUNT(*) AS n FROM comments c JOIN social_accounts sa ON sa.id = c.social_account_id WHERE ${whereSql}`,
+          params,
+        )
       )?.n ?? 0;
 
-    const rows = all<PreviewRow>(
+    const rows = await all<PreviewRow>(
       req.db,
       `SELECT c.id, c.brand_id, b.name AS brand_name, b.color AS brand_color,
          sa.platform, sa.id AS account_id, sa.name AS account_name, sa.account_type,

@@ -34,8 +34,8 @@ import type { SeedSummary } from '../../shared/types';
 // 回應型別放在 shared/types.ts（POST /api/mock/reset 會回傳）
 export type { SeedSummary };
 
-export function seedDemoData(db: DB, opts: { now: Date }): SeedSummary {
-  return new DemoSeeder(db, opts.now).run();
+export async function seedDemoData(db: DB, opts: { now: Date }): Promise<SeedSummary> {
+  return new DemoSeeder(db, opts.now).execute();
 }
 
 // ---------------------------------------------------------------------------
@@ -195,16 +195,16 @@ class DemoSeeder {
     this.nowMs = now.getTime();
   }
 
-  run(): SeedSummary {
-    this.createBrands();
-    this.createUsers();
-    this.applyBrandSettings();
-    this.loadCategories();
+  async execute(): Promise<SeedSummary> {
+    await this.createBrands();
+    await this.createUsers();
+    await this.applyBrandSettings();
+    await this.loadCategories();
 
     const drafts: Draft[] = [];
     for (const brand of this.brands) {
-      const accounts = this.createAccounts(brand);
-      const posts = this.createPosts(brand, accounts);
+      const accounts = await this.createAccounts(brand);
+      const posts = await this.createPosts(brand, accounts);
       drafts.push(...this.draftComments(brand, posts, drafts.length));
     }
     for (const d of drafts) this.plan(d);
@@ -212,13 +212,13 @@ class DemoSeeder {
 
     // 依留言時間寫入，id 才會跟時間順序一致（被回覆的留言一定比較早，會先取得 id）
     drafts.sort((a, b) => a.occurred - b.occurred || a.order - b.order);
-    for (const d of drafts) this.insertComment(d);
-    for (const d of drafts) this.insertHistory(d);
-    this.flushAudits();
+    for (const d of drafts) await this.insertComment(d);
+    for (const d of drafts) await this.insertHistory(d);
+    await this.flushAudits();
 
     const nowIso = this.iso(this.nowMs);
-    const summary = this.counts();
-    audit(this.db, {
+    const summary = await this.counts();
+    await audit(this.db, {
       actorType: 'system',
       action: 'mock.seed',
       targetType: 'system',
@@ -226,10 +226,10 @@ class DemoSeeder {
       detail: { ...summary, auditLogs: undefined },
       createdAt: nowIso,
     });
-    run(this.db, `INSERT INTO schema_meta (key, value) VALUES ('seeded_at', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value`, [
+    await run(this.db, `INSERT INTO schema_meta (key, value) VALUES ('seeded_at', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value`, [
       nowIso,
     ]);
-    return this.counts();
+    return await this.counts();
   }
 
   // ---------------- 時間 ----------------
@@ -243,11 +243,11 @@ class DemoSeeder {
   }
 
   // ---------------- 品牌、人員、設定 ----------------
-  private createBrands(): void {
-    DEMO_BRANDS.forEach((b, i) => {
+  private async createBrands(): Promise<void> {
+    for (const [i, b] of DEMO_BRANDS.entries()) {
       const script = BRAND_SCRIPTS.find((s) => s.code === b.code) ?? fail(`找不到品牌 ${b.code} 的劇本`);
       const createdAt = this.iso(this.ago((420 - i * 30) * DAY_MIN));
-      const id = insert(this.db, 'brands', {
+      const id = await insert(this.db, 'brands', {
         name: b.name,
         code: b.code,
         color: b.color,
@@ -255,18 +255,18 @@ class DemoSeeder {
         created_at: createdAt,
         updated_at: createdAt,
       });
-      ensureBrandDefaults(this.db, id);
+      await ensureBrandDefaults(this.db, id);
       this.brands.push({ id, code: b.code, name: b.name, script });
-    });
+    }
   }
 
-  private createUsers(): void {
+  private async createUsers(): Promise<void> {
     const passwordHash = hashPassword(DEMO_PASSWORD);
     const createdAt = this.iso(this.ago(200 * DAY_MIN));
     for (const u of DEMO_USERS) {
       const key = u.email.split('@')[0] as UserKey;
       if (!(key in LAST_LOGIN_AGO)) fail(`示範人員 ${u.email} 沒有對應的代號`);
-      const id = insert(this.db, 'users', {
+      const id = await insert(this.db, 'users', {
         name: u.name,
         email: u.email,
         password_hash: passwordHash,
@@ -279,7 +279,7 @@ class DemoSeeder {
       const brandIds = new Set<number>();
       for (const code of u.brandCodes) {
         const brand = this.brands.find((b) => b.code === code) ?? fail(`示範人員 ${u.name} 的品牌 ${code} 不存在`);
-        run(this.db, 'INSERT INTO user_brands (user_id, brand_id, created_at) VALUES (?, ?, ?)', [id, brand.id, createdAt]);
+        await run(this.db, 'INSERT INTO user_brands (user_id, brand_id, created_at) VALUES (?, ?, ?)', [id, brand.id, createdAt]);
         brandIds.add(brand.id);
       }
       this.users.set(key, { key, id, name: u.name, isAdmin: u.role === 'admin', brandIds });
@@ -297,16 +297,16 @@ class DemoSeeder {
     return [...this.users.values()].find((u) => u.isAdmin) ?? fail('缺少管理員');
   }
 
-  private applyBrandSettings(): void {
+  private async applyBrandSettings(): Promise<void> {
     const admin = this.adminUser();
     const updatedAt = this.iso(this.ago(30 * DAY_MIN));
     for (const brand of this.brands) {
       const s = BRAND_SETTINGS[brand.code] ?? fail(`找不到品牌 ${brand.code} 的設定`);
       // ensureBrandDefaults 以實際時間建立，這裡改成固定時間，確保同一個 now 產生相同資料
-      run(this.db, 'UPDATE brand_category_settings SET updated_at = ? WHERE brand_id = ?', [updatedAt, brand.id]);
+      await run(this.db, 'UPDATE brand_category_settings SET updated_at = ? WHERE brand_id = ?', [updatedAt, brand.id]);
 
       for (const tweak of s.categories) {
-        const cat = get<{ id: number }>(this.db, 'SELECT id FROM comment_categories WHERE key = ?', [tweak.category]);
+        const cat = await get<{ id: number }>(this.db, 'SELECT id FROM comment_categories WHERE key = ?', [tweak.category]);
         if (!cat) fail(`留言類型 ${tweak.category} 不存在`);
         const patch: Record<string, unknown> = { updated_by_id: admin.id };
         if (tweak.slaMinutes !== undefined) {
@@ -317,7 +317,7 @@ class DemoSeeder {
         if (tweak.toneNote !== undefined) patch.tone_note = tweak.toneNote;
         if (tweak.extraKeywords) patch.extra_keywords = tweak.extraKeywords;
         const cols = Object.keys(patch);
-        run(
+        await run(
           this.db,
           `UPDATE brand_category_settings SET ${cols.map((c) => `${c} = :${c}`).join(', ')}
            WHERE brand_id = :brand_id AND category_id = :category_id`,
@@ -326,12 +326,12 @@ class DemoSeeder {
       }
 
       const st = s.style;
-      const row = get<{ variants: string }>(this.db, 'SELECT variants FROM brand_styles WHERE brand_id = ?', [brand.id]);
+      const row = await get<{ variants: string }>(this.db, 'SELECT variants FROM brand_styles WHERE brand_id = ?', [brand.id]);
       const variants = parseJson<Array<{ key: string; label: string; enabled: boolean }>>(row?.variants, []).map((v) => ({
         ...v,
         enabled: !(st.disabledVariants ?? []).includes(v.key),
       }));
-      run(
+      await run(
         this.db,
         `UPDATE brand_styles SET personality = :personality, speaking_style = :speaking_style, tone = :tone,
            formality = :formality, humor = :humor, reply_length = :reply_length, emoji_usage = :emoji_usage,
@@ -362,14 +362,14 @@ class DemoSeeder {
     }
   }
 
-  private loadCategories(): void {
-    for (const c of all<{ id: number; key: string; default_priority: Priority }>(
+  private async loadCategories(): Promise<void> {
+    for (const c of await all<{ id: number; key: string; default_priority: Priority }>(
       this.db,
       'SELECT id, key, default_priority FROM comment_categories',
     )) {
       this.categories.set(c.key, { id: c.id, key: c.key, defaultPriority: c.default_priority });
     }
-    for (const s of all<{ brand_id: number; key: string; sla_minutes: number | null; sla_enabled: number; handling_mode: HandlingMode }>(
+    for (const s of await all<{ brand_id: number; key: string; sla_minutes: number | null; sla_enabled: number; handling_mode: HandlingMode }>(
       this.db,
       `SELECT s.brand_id, c.key, s.sla_minutes, s.sla_enabled, s.handling_mode
        FROM brand_category_settings s JOIN comment_categories c ON c.id = s.category_id`,
@@ -382,14 +382,14 @@ class DemoSeeder {
   }
 
   // ---------------- 社群帳號與貼文 ----------------
-  private createAccounts(brand: BrandInfo): Map<string, AccountInfo> {
+  private async createAccounts(brand: BrandInfo): Promise<Map<string, AccountInfo>> {
     const map = new Map<string, AccountInfo>();
     const createdAt = this.iso(this.ago(300 * DAY_MIN));
     for (const a of brand.script.accounts) {
       if (map.has(a.key)) fail(`${brand.code} 的帳號代號 ${a.key} 重複`);
       const type = getAccountType(a.platform, a.accountType) ?? fail(`${a.platform} 不支援帳號類型 ${a.accountType}`);
       const syncedAgo = a.syncedAgo ?? 2;
-      const id = insert(this.db, 'social_accounts', {
+      const id = await insert(this.db, 'social_accounts', {
         brand_id: brand.id,
         platform: a.platform,
         account_type: a.accountType,
@@ -409,7 +409,7 @@ class DemoSeeder {
     return map;
   }
 
-  private createPosts(brand: BrandInfo, accounts: Map<string, AccountInfo>): Map<string, PostInfo> {
+  private async createPosts(brand: BrandInfo, accounts: Map<string, AccountInfo>): Promise<Map<string, PostInfo>> {
     const map = new Map<string, PostInfo>();
     for (const p of brand.script.posts) {
       if (map.has(p.key)) fail(`${brand.code} 的貼文代號 ${p.key} 重複`);
@@ -419,7 +419,7 @@ class DemoSeeder {
       const code = hash(`${brand.code}:${p.key}`);
       const externalId = p.type === 'business_profile' ? `${account.seed.externalId}/profile` : `${account.seed.externalId}_${code}`;
       const publishedAt = this.ago(p.ago);
-      const id = insert(this.db, 'posts', {
+      const id = await insert(this.db, 'posts', {
         brand_id: brand.id,
         social_account_id: account.id,
         external_id: externalId,
@@ -693,11 +693,11 @@ class DemoSeeder {
     return 'neutral';
   }
 
-  private insertComment(d: Draft): void {
+  private async insertComment(d: Draft): Promise<void> {
     const flags = d.seed.risk ?? [];
     const sla = d.setting.slaMinutes;
     const lastEvent = Math.max(d.fetched, d.completedAt ?? 0, ...d.events.map((e) => e.at));
-    d.id = insert(this.db, 'comments', {
+    d.id = await insert(this.db, 'comments', {
       brand_id: d.brand.id,
       social_account_id: d.post.account.id,
       post_id: d.post.id,
@@ -739,13 +739,13 @@ class DemoSeeder {
     });
   }
 
-  private insertHistory(d: Draft): void {
+  private async insertHistory(d: Draft): Promise<void> {
     const base = { brandId: d.brand.id, commentId: d.id, targetType: 'comment', targetId: d.id };
     for (const ev of d.events) {
       const createdAt = this.iso(ev.at);
       switch (ev.t) {
         case 'assign': {
-          const assignmentId = insert(this.db, 'assignments', {
+          const assignmentId = await insert(this.db, 'assignments', {
             comment_id: d.id,
             brand_id: d.brand.id,
             from_user_id: null,
@@ -768,7 +768,7 @@ class DemoSeeder {
           break;
         }
         case 'transfer': {
-          const assignmentId = insert(this.db, 'assignments', {
+          const assignmentId = await insert(this.db, 'assignments', {
             comment_id: d.id,
             brand_id: d.brand.id,
             from_user_id: ev.from.id,
@@ -805,7 +805,7 @@ class DemoSeeder {
           break;
         case 'reply': {
           const platformReplyId = `mock-reply-${hash(`${d.externalId}:${ev.at}`)}`;
-          const replyId = insert(this.db, 'replies', {
+          const replyId = await insert(this.db, 'replies', {
             comment_id: d.id,
             brand_id: d.brand.id,
             body: ev.body,
@@ -844,7 +844,7 @@ class DemoSeeder {
           });
           break;
         case 'action': {
-          const actionId = insert(this.db, 'comment_actions', {
+          const actionId = await insert(this.db, 'comment_actions', {
             comment_id: d.id,
             brand_id: d.brand.id,
             action: ev.action,
@@ -893,23 +893,23 @@ class DemoSeeder {
   }
 
   /** 依發生時間寫入操作紀錄，id 順序與時間一致 */
-  private flushAudits(): void {
+  private async flushAudits(): Promise<void> {
     this.audits.sort((a, b) => a.at - b.at || a.seq - b.seq);
-    for (const { at: _at, seq: _seq, ...entry } of this.audits) audit(this.db, entry);
+    for (const { at: _at, seq: _seq, ...entry } of this.audits) await audit(this.db, entry);
   }
 
-  private counts(): SeedSummary {
-    const n = (table: string) => get<{ n: number }>(this.db, `SELECT COUNT(*) AS n FROM ${table}`)!.n;
+  private async counts(): Promise<SeedSummary> {
+    const n = async (table: string) => (await get<{ n: number }>(this.db, `SELECT COUNT(*) AS n FROM ${table}`))!.n;
     return {
-      brands: n('brands'),
-      users: n('users'),
-      accounts: n('social_accounts'),
-      posts: n('posts'),
-      comments: n('comments'),
-      replies: n('replies'),
-      assignments: n('assignments'),
-      actions: n('comment_actions'),
-      auditLogs: n('audit_logs'),
+      brands: await n('brands'),
+      users: await n('users'),
+      accounts: await n('social_accounts'),
+      posts: await n('posts'),
+      comments: await n('comments'),
+      replies: await n('replies'),
+      assignments: await n('assignments'),
+      actions: await n('comment_actions'),
+      auditLogs: await n('audit_logs'),
     };
   }
 }

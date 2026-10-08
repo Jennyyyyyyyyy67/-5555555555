@@ -5,21 +5,21 @@ import { DEFAULT_CATEGORIES } from '../../shared/constants';
 import type { Brand } from '../../shared/types';
 
 type AuditRow = { action: string; actor_user_id: number | null; brand_id: number | null; summary: string; before: string | null; after: string | null };
-const auditRows = (ctx: ReturnType<typeof createTestContext>, actionLike = 'brand.%') =>
-  all<AuditRow>(ctx.db, 'SELECT action, actor_user_id, brand_id, summary, before, after FROM audit_logs WHERE action LIKE ? ORDER BY id', [actionLike]);
+const auditRows = async (ctx: Awaited<ReturnType<typeof createTestContext>>, actionLike = 'brand.%') =>
+  await all<AuditRow>(ctx.db, 'SELECT action, actor_user_id, brand_id, summary, before, after FROM audit_logs WHERE action LIKE ? ORDER BY id', [actionLike]);
 
 const validInput = { name: '新品牌', code: 'new-1', color: '#AABBCC', description: '測試用品牌', nearDueMinutes: 20 };
 
 describe('GET /api/brands', () => {
   it('管理員看到全部品牌（含停用）與統計數字，啟用中排前面', async () => {
-    const ctx = createTestContext();
-    run(ctx.db, 'UPDATE brands SET is_active = 0 WHERE id = ?', [ctx.fx.brandA]);
+    const ctx = await createTestContext();
+    await run(ctx.db, 'UPDATE brands SET is_active = 0 WHERE id = ?', [ctx.fx.brandA]);
     // 管理員本身的授權、已停用人員都不列入授權人員數
-    run(ctx.db, 'INSERT INTO user_brands (user_id, brand_id, created_at) VALUES (?, ?, ?)', [ctx.fx.admin, ctx.fx.brandB, '2026-01-01']);
-    const inactiveOp = insert(ctx.db, 'users', {
+    await run(ctx.db, 'INSERT INTO user_brands (user_id, brand_id, created_at) VALUES (?, ?, ?)', [ctx.fx.admin, ctx.fx.brandB, '2026-01-01']);
+    const inactiveOp = await insert(ctx.db, 'users', {
       name: '離職', email: 'gone@test.tw', role: 'operator', password_hash: 'x', is_active: false, created_at: '2026-01-01', updated_at: '2026-01-01',
     });
-    run(ctx.db, 'INSERT INTO user_brands (user_id, brand_id, created_at) VALUES (?, ?, ?)', [inactiveOp, ctx.fx.brandB, '2026-01-01']);
+    await run(ctx.db, 'INSERT INTO user_brands (user_id, brand_id, created_at) VALUES (?, ?, ?)', [inactiveOp, ctx.fx.brandB, '2026-01-01']);
 
     const agent = await ctx.loginAs('admin');
     const res = await agent.get('/api/brands');
@@ -34,7 +34,7 @@ describe('GET /api/brands', () => {
   });
 
   it('操作人員只看到自己被授權且啟用中的品牌，且沒有統計欄位', async () => {
-    const ctx = createTestContext();
+    const ctx = await createTestContext();
     const agent = await ctx.loginAs('opA');
     const res = await agent.get('/api/brands');
     expect(res.status).toBe(200);
@@ -46,14 +46,14 @@ describe('GET /api/brands', () => {
   });
 
   it('未登入回傳 401', async () => {
-    const ctx = createTestContext();
+    const ctx = await createTestContext();
     expect((await request(ctx.app).get('/api/brands')).status).toBe(401);
   });
 });
 
 describe('GET /api/brands/:id', () => {
   it('操作人員讀取其他品牌回傳 404（不洩漏是否存在）', async () => {
-    const ctx = createTestContext();
+    const ctx = await createTestContext();
     const agent = await ctx.loginAs('opA');
     const own = await agent.get(`/api/brands/${ctx.fx.brandA}`);
     expect(own.status).toBe(200);
@@ -67,8 +67,8 @@ describe('GET /api/brands/:id', () => {
   });
 
   it('品牌停用後主管讀取回傳 404；管理員仍可讀取並看到統計', async () => {
-    const ctx = createTestContext();
-    run(ctx.db, 'UPDATE brands SET is_active = 0 WHERE id = ?', [ctx.fx.brandA]);
+    const ctx = await createTestContext();
+    await run(ctx.db, 'UPDATE brands SET is_active = 0 WHERE id = ?', [ctx.fx.brandA]);
     const sup = await ctx.loginAs('sup');
     expect((await sup.get(`/api/brands/${ctx.fx.brandA}`)).status).toBe(404);
     const admin = await ctx.loginAs('admin');
@@ -80,7 +80,7 @@ describe('GET /api/brands/:id', () => {
 
 describe('POST /api/brands', () => {
   it('管理員可新增品牌：代碼轉大寫、建立預設設定並寫入操作紀錄', async () => {
-    const ctx = createTestContext();
+    const ctx = await createTestContext();
     const agent = await ctx.loginAs('admin');
     const res = await agent.post('/api/brands').send({ ...validInput, name: '  新品牌  ' });
     expect(res.status).toBe(201);
@@ -90,13 +90,13 @@ describe('POST /api/brands', () => {
     });
     const id = res.body.id as number;
 
-    const settings = get<{ n: number }>(ctx.db, 'SELECT COUNT(*) AS n FROM brand_category_settings WHERE brand_id = ?', [id])!;
+    const settings = (await get<{ n: number }>(ctx.db, 'SELECT COUNT(*) AS n FROM brand_category_settings WHERE brand_id = ?', [id]))!;
     expect(settings.n).toBe(DEFAULT_CATEGORIES.length);
     expect(settings.n).toBe(16);
-    const style = get<{ updated_by_id: number }>(ctx.db, 'SELECT updated_by_id FROM brand_styles WHERE brand_id = ?', [id]);
+    const style = await get<{ updated_by_id: number }>(ctx.db, 'SELECT updated_by_id FROM brand_styles WHERE brand_id = ?', [id]);
     expect(style?.updated_by_id).toBe(ctx.fx.admin);
 
-    const logs = auditRows(ctx, 'brand.create');
+    const logs = await auditRows(ctx, 'brand.create');
     expect(logs).toHaveLength(1);
     expect(logs[0]).toMatchObject({ actor_user_id: ctx.fx.admin, brand_id: id });
     expect(logs[0].summary).toContain('新品牌');
@@ -104,7 +104,7 @@ describe('POST /api/brands', () => {
   });
 
   it('說明與即將超時門檻有預設值', async () => {
-    const ctx = createTestContext();
+    const ctx = await createTestContext();
     const agent = await ctx.loginAs('admin');
     const res = await agent.post('/api/brands').send({ name: '預設品牌', code: 'DEF', color: '#123abc' });
     expect(res.status).toBe(201);
@@ -126,18 +126,18 @@ describe('POST /api/brands', () => {
     ['門檻非整數', { nearDueMinutes: 1.5 }, 'nearDueMinutes'],
     ['門檻為文字', { nearDueMinutes: '15' }, 'nearDueMinutes'],
   ])('輸入驗證：%s → 400', async (_label, override, field) => {
-    const ctx = createTestContext();
+    const ctx = await createTestContext();
     const agent = await ctx.loginAs('admin');
     const res = await agent.post('/api/brands').send({ ...validInput, ...override });
     expect(res.status).toBe(400);
     expect(res.body.error.details.field).toBe(field);
     expect(res.body.error.message).toMatch(/[一-鿿]/);
-    expect(get<{ n: number }>(ctx.db, 'SELECT COUNT(*) AS n FROM brands')!.n).toBe(2);
-    expect(auditRows(ctx)).toHaveLength(0);
+    expect((await get<{ n: number }>(ctx.db, 'SELECT COUNT(*) AS n FROM brands'))!.n).toBe(2);
+    expect(await auditRows(ctx)).toHaveLength(0);
   });
 
   it('缺少必填欄位 → 400', async () => {
-    const ctx = createTestContext();
+    const ctx = await createTestContext();
     const agent = await ctx.loginAs('admin');
     const res = await agent.post('/api/brands').send({});
     expect(res.status).toBe(400);
@@ -145,7 +145,7 @@ describe('POST /api/brands', () => {
   });
 
   it('名稱重複 → 409「品牌名稱已存在」', async () => {
-    const ctx = createTestContext();
+    const ctx = await createTestContext();
     const agent = await ctx.loginAs('admin');
     const res = await agent.post('/api/brands').send({ ...validInput, name: '品牌甲' });
     expect(res.status).toBe(409);
@@ -154,29 +154,29 @@ describe('POST /api/brands', () => {
   });
 
   it('代碼重複（不分大小寫）→ 409「品牌代碼已存在」', async () => {
-    const ctx = createTestContext();
+    const ctx = await createTestContext();
     const agent = await ctx.loginAs('admin');
     const res = await agent.post('/api/brands').send({ ...validInput, code: 'ba' });
     expect(res.status).toBe(409);
     expect(res.body.error.message).toContain('品牌代碼已存在');
     expect(res.body.error.details.field).toBe('code');
-    expect(auditRows(ctx)).toHaveLength(0);
+    expect(await auditRows(ctx)).toHaveLength(0);
   });
 
   it('主管與操作人員不可新增品牌（403）', async () => {
-    const ctx = createTestContext();
+    const ctx = await createTestContext();
     for (const who of ['sup', 'opA'] as const) {
       const agent = await ctx.loginAs(who);
       const res = await agent.post('/api/brands').send(validInput);
       expect(res.status).toBe(403);
     }
-    expect(get<{ n: number }>(ctx.db, 'SELECT COUNT(*) AS n FROM brands')!.n).toBe(2);
+    expect((await get<{ n: number }>(ctx.db, 'SELECT COUNT(*) AS n FROM brands'))!.n).toBe(2);
   });
 });
 
 describe('PATCH /api/brands/:id', () => {
   it('修改欄位並寫入 brand.update（只記錄有變動的欄位）', async () => {
-    const ctx = createTestContext();
+    const ctx = await createTestContext();
     const agent = await ctx.loginAs('admin');
     const res = await agent
       .patch(`/api/brands/${ctx.fx.brandA}`)
@@ -184,7 +184,7 @@ describe('PATCH /api/brands/:id', () => {
     expect(res.status).toBe(200);
     expect(res.body).toMatchObject({ name: '品牌甲（新）', description: '新的說明', nearDueMinutes: 30, accountCount: 1, userCount: 2 });
 
-    const logs = auditRows(ctx);
+    const logs = await auditRows(ctx);
     expect(logs).toHaveLength(1);
     expect(logs[0].action).toBe('brand.update');
     expect(logs[0].brand_id).toBe(ctx.fx.brandA);
@@ -195,32 +195,32 @@ describe('PATCH /api/brands/:id', () => {
   });
 
   it('沒有任何變動時回 200 且不寫操作紀錄', async () => {
-    const ctx = createTestContext();
+    const ctx = await createTestContext();
     const agent = await ctx.loginAs('admin');
-    const before = get<{ updated_at: string }>(ctx.db, 'SELECT updated_at FROM brands WHERE id = ?', [ctx.fx.brandA])!;
+    const before = (await get<{ updated_at: string }>(ctx.db, 'SELECT updated_at FROM brands WHERE id = ?', [ctx.fx.brandA]))!;
     const res = await agent
       .patch(`/api/brands/${ctx.fx.brandA}`)
       .send({ name: '品牌甲', color: '#123456', description: '', nearDueMinutes: 15, isActive: true, code: 'ba' });
     expect(res.status).toBe(200);
     expect(res.body.name).toBe('品牌甲');
-    expect(auditRows(ctx)).toHaveLength(0);
-    const after = get<{ updated_at: string }>(ctx.db, 'SELECT updated_at FROM brands WHERE id = ?', [ctx.fx.brandA])!;
+    expect(await auditRows(ctx)).toHaveLength(0);
+    const after = (await get<{ updated_at: string }>(ctx.db, 'SELECT updated_at FROM brands WHERE id = ?', [ctx.fx.brandA]))!;
     expect(after.updated_at).toBe(before.updated_at);
   });
 
   it('品牌代碼建立後不可修改（400）', async () => {
-    const ctx = createTestContext();
+    const ctx = await createTestContext();
     const agent = await ctx.loginAs('admin');
     const res = await agent.patch(`/api/brands/${ctx.fx.brandA}`).send({ code: 'NEWCODE', name: '改名' });
     expect(res.status).toBe(400);
     expect(res.body.error.message).toContain('品牌代碼建立後不可修改');
-    const row = get<{ code: string; name: string }>(ctx.db, 'SELECT code, name FROM brands WHERE id = ?', [ctx.fx.brandA])!;
+    const row = (await get<{ code: string; name: string }>(ctx.db, 'SELECT code, name FROM brands WHERE id = ?', [ctx.fx.brandA]))!;
     expect(row).toEqual({ code: 'BA', name: '品牌甲' });
-    expect(auditRows(ctx)).toHaveLength(0);
+    expect(await auditRows(ctx)).toHaveLength(0);
   });
 
   it('改成已存在的名稱 → 409', async () => {
-    const ctx = createTestContext();
+    const ctx = await createTestContext();
     const agent = await ctx.loginAs('admin');
     const res = await agent.patch(`/api/brands/${ctx.fx.brandA}`).send({ name: '品牌乙' });
     expect(res.status).toBe(409);
@@ -228,33 +228,33 @@ describe('PATCH /api/brands/:id', () => {
   });
 
   it('輸入驗證錯誤 → 400', async () => {
-    const ctx = createTestContext();
+    const ctx = await createTestContext();
     const agent = await ctx.loginAs('admin');
     expect((await agent.patch(`/api/brands/${ctx.fx.brandA}`).send({ color: 'blue' })).status).toBe(400);
     expect((await agent.patch(`/api/brands/${ctx.fx.brandA}`).send({ nearDueMinutes: 500 })).status).toBe(400);
     expect((await agent.patch(`/api/brands/${ctx.fx.brandA}`).send({ isActive: 'no' })).status).toBe(400);
-    expect(auditRows(ctx)).toHaveLength(0);
+    expect(await auditRows(ctx)).toHaveLength(0);
   });
 
   it('不存在的品牌 → 404', async () => {
-    const ctx = createTestContext();
+    const ctx = await createTestContext();
     const agent = await ctx.loginAs('admin');
     expect((await agent.patch('/api/brands/99999').send({ name: '不存在' })).status).toBe(404);
   });
 
   it('主管與操作人員不可修改品牌（403）', async () => {
-    const ctx = createTestContext();
+    const ctx = await createTestContext();
     for (const who of ['sup', 'opA'] as const) {
       const agent = await ctx.loginAs(who);
       expect((await agent.patch(`/api/brands/${ctx.fx.brandA}`).send({ name: '偷改' })).status).toBe(403);
       expect((await agent.patch(`/api/brands/${ctx.fx.brandA}`).send({ isActive: false })).status).toBe(403);
     }
-    const row = get<{ name: string; is_active: number }>(ctx.db, 'SELECT name, is_active FROM brands WHERE id = ?', [ctx.fx.brandA])!;
+    const row = (await get<{ name: string; is_active: number }>(ctx.db, 'SELECT name, is_active FROM brands WHERE id = ?', [ctx.fx.brandA]))!;
     expect(row).toEqual({ name: '品牌甲', is_active: 1 });
   });
 
   it('停用後品牌從操作人員的可存取品牌中消失；重新啟用後恢復，並寫入操作紀錄', async () => {
-    const ctx = createTestContext();
+    const ctx = await createTestContext();
     const admin = await ctx.loginAs('admin');
     const op = await ctx.loginAs('opA');
     expect((await op.get('/api/auth/me')).body.brands.map((b: { id: number }) => b.id)).toEqual([ctx.fx.brandA]);
@@ -270,13 +270,13 @@ describe('PATCH /api/brands/:id', () => {
     const adminList = (await admin.get('/api/brands')).body as Brand[];
     expect(adminList.find((b) => b.id === ctx.fx.brandA)?.isActive).toBe(false);
     // 資料保留
-    expect(get<{ n: number }>(ctx.db, 'SELECT COUNT(*) AS n FROM comments WHERE brand_id = ?', [ctx.fx.brandA])!.n).toBe(1);
+    expect((await get<{ n: number }>(ctx.db, 'SELECT COUNT(*) AS n FROM comments WHERE brand_id = ?', [ctx.fx.brandA]))!.n).toBe(1);
 
     const on = await admin.patch(`/api/brands/${ctx.fx.brandA}`).send({ isActive: true });
     expect(on.status).toBe(200);
     expect((await op.get('/api/auth/me')).body.brands.map((b: { id: number }) => b.id)).toEqual([ctx.fx.brandA]);
 
-    const logs = auditRows(ctx);
+    const logs = await auditRows(ctx);
     expect(logs.map((l) => l.action)).toEqual(['brand.deactivate', 'brand.activate']);
     expect(logs[0].summary).toContain('停用品牌「品牌甲」');
     expect(JSON.parse(logs[0].before!)).toEqual({ isActive: true });
@@ -286,10 +286,10 @@ describe('PATCH /api/brands/:id', () => {
   });
 
   it('同時修改欄位與停用時，分別寫入 brand.update 與 brand.deactivate', async () => {
-    const ctx = createTestContext();
+    const ctx = await createTestContext();
     const agent = await ctx.loginAs('admin');
     const res = await agent.patch(`/api/brands/${ctx.fx.brandB}`).send({ description: '暫停經營', isActive: false });
     expect(res.status).toBe(200);
-    expect(auditRows(ctx).map((l) => l.action)).toEqual(['brand.update', 'brand.deactivate']);
+    expect((await auditRows(ctx)).map((l) => l.action)).toEqual(['brand.update', 'brand.deactivate']);
   });
 });

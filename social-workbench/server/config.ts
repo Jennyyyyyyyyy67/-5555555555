@@ -3,6 +3,24 @@ import { fileURLToPath } from 'node:url';
 const root = fileURLToPath(new URL('..', import.meta.url));
 const onVercel = !!process.env.VERCEL;
 
+const isPgUrl = (v: string | undefined) => !!v && /^postgres(ql)?:\/\//.test(v);
+
+/**
+ * 找出 Postgres 連線字串。優先 DATABASE_URL、POSTGRES_URL；
+ * 若在 Vercel 連結 Neon 時改了變數前綴（例如 STORAGE_URL），也會自動找到（優先使用有連線池的網址）。
+ */
+function findDatabaseUrl(): { url: string; source: string } | null {
+  for (const key of ['DATABASE_URL', 'POSTGRES_URL']) {
+    if (isPgUrl(process.env[key])) return { url: process.env[key]!, source: key };
+  }
+  const candidates = Object.entries(process.env)
+    .filter(([k, v]) => /URL$/.test(k) && isPgUrl(v))
+    .sort(([a], [b]) => Number(/UNPOOLED|NON_POOLING/.test(a)) - Number(/UNPOOLED|NON_POOLING/.test(b)));
+  return candidates.length ? { url: candidates[0][1]!, source: candidates[0][0] } : null;
+}
+
+const found = findDatabaseUrl();
+
 export const config = {
   port: Number(process.env.PORT ?? 3001),
   /**
@@ -10,7 +28,9 @@ export const config = {
    * - 雲端（Vercel）：DATABASE_URL 或 POSTGRES_URL（Neon / Vercel Postgres 會自動提供）
    * - 本機：未設定時使用 PGlite，資料存在 data/pglite 資料夾
    */
-  databaseUrl: process.env.DATABASE_URL ?? process.env.POSTGRES_URL ?? `pglite:${root}data/pglite`,
+  databaseUrl: found?.url ?? `pglite:${root}data/pglite`,
+  /** 連線字串來自哪個環境變數（null 表示沒有設定，使用本機 PGlite） */
+  databaseUrlSource: found?.source ?? null,
   distDir: `${root}dist`,
   /** 示範模式：資料庫為空時自動建立示範資料，並在登入頁顯示示範帳號 */
   demoMode: (process.env.DEMO_MODE ?? 'true') !== 'false',

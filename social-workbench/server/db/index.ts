@@ -96,7 +96,7 @@ function wrapPglite(lite: PGlite): DB {
 export async function openDb(url: string, opts: { migrate?: boolean } = {}): Promise<DB> {
   let db: DB;
   if (/^postgres(ql)?:\/\//.test(url)) {
-    db = wrapPg(new pg.Pool({ connectionString: url, max: Number(process.env.PG_POOL_MAX ?? 3) }));
+    db = wrapPg(new pg.Pool({ connectionString: url, max: Number(process.env.PG_POOL_MAX ?? 3), connectionTimeoutMillis: 10_000 }));
   } else {
     const dir = url.startsWith('pglite:') ? url.slice('pglite:'.length) : undefined;
     if (dir) mkdirSync(dir, { recursive: true });

@@ -4,6 +4,7 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 import type { Express } from 'express';
 import { createApp } from './app';
 import { initDatabase } from './init';
+import { config } from './config';
 
 let appPromise: Promise<Express> | null = null;
 
@@ -23,16 +24,14 @@ export default async function handler(req: IncomingMessage, res: ServerResponse)
     app(req as Parameters<Express>[0], res as Parameters<Express>[1]);
   } catch (err) {
     console.error('初始化失敗', err);
+    // 錯誤原因（去掉連線字串，避免洩漏密碼）
+    const reason = String((err as Error)?.message ?? err).replace(/postgres(ql)?:\/\/\S+/g, '[連線字串]').slice(0, 300);
+    const message = !config.databaseUrlSource
+      ? '尚未設定資料庫：Vercel 專案的環境變數中找不到 Postgres 連線字串。請在 Storage 建立 Neon 資料庫並「Connect」到這個專案（三個環境都勾），然後重新部署（Redeploy）。'
+      : `已找到資料庫設定（${config.databaseUrlSource}），但連線失敗：${reason}`;
     res.statusCode = 500;
     res.setHeader('Content-Type', 'application/json; charset=utf-8');
-    res.end(
-      JSON.stringify({
-        error: {
-          code: 'init_failed',
-          message: '系統無法連線到資料庫，請確認 Vercel 已設定 DATABASE_URL（Postgres 連線字串）',
-        },
-      }),
-    );
+    res.end(JSON.stringify({ error: { code: 'init_failed', message } }));
   }
 }
 

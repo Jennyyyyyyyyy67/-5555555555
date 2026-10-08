@@ -182,7 +182,7 @@ export default function AccountsPage() {
         ) : (
           <Card bodyClassName="">
             <div className="table-wrap">
-              <table className="table">
+              <table className="table table-cards">
                 <thead>
                   <tr>
                     <th>平台</th>
@@ -200,13 +200,13 @@ export default function AccountsPage() {
                     const testing = testingIds.has(a.id);
                     return (
                       <tr key={a.id} className={a.isActive ? undefined : 'row-muted'}>
-                        <td>
+                        <td data-label="平台">
                           <span className="acc-type">
                             <PlatformIcon platform={a.platform} />
                             {accountTypeLabel(a.accountType)}
                           </span>
                         </td>
-                        <td>
+                        <td className="card-title">
                           <span className="acc-name">
                             <span className="row" style={{ gap: 6 }}>
                               <strong>{a.name}</strong>
@@ -215,14 +215,14 @@ export default function AccountsPage() {
                             {a.handle && <span className="muted small">{a.handle}</span>}
                           </span>
                         </td>
-                        <td>
+                        <td data-label="品牌">
                           <BrandTag name={a.brandName} color={brand?.color ?? FALLBACK_BRAND_COLOR} />
                           {brand && !brand.isActive && <div className="muted small">品牌已停用</div>}
                         </td>
-                        <td>
+                        <td data-label="支援動作">
                           <CapabilityChips capabilities={capabilitiesOf(a)} />
                         </td>
-                        <td>
+                        <td data-label="連線狀態">
                           <span className="acc-status">
                             <Badge tone={STATUS_TONE[a.status]}>{ACCOUNT_STATUS_LABELS[a.status] ?? a.status}</Badge>
                             <span className="muted small" title={a.lastCheckedAt ? formatDateTime(a.lastCheckedAt) : undefined}>
@@ -230,12 +230,12 @@ export default function AccountsPage() {
                             </span>
                           </span>
                         </td>
-                        <td className="num nowrap">
+                        <td className="num nowrap" data-label="貼文／留言">
                           {formatNumber(a.postCount)}／{formatNumber(a.commentCount)}
                         </td>
                         {canManage && (
                           <td className="actions-cell">
-                            <span className="row" style={{ justifyContent: 'flex-end', gap: 4 }}>
+                            <span className="row-actions">
                               <Button
                                 size="sm"
                                 icon={<IconRefresh />}
@@ -627,7 +627,7 @@ function EditAccountModal({
             <TextInput id="acc-edit-handle" value={handle} maxLength={60} onChange={(e) => setHandle(e.target.value)} />
           </Field>
           <p className="muted small">
-            品牌、平台、帳號類型與平台帳號 ID 建立後不可更改，以免不同品牌的留言與紀錄混在一起。如需改用其他平台帳號，請停用此帳號後重新新增。
+            品牌、平台、帳號類型與平台帳號 ID 建立後不可更改，以免不同品牌的留言與紀錄混在一起。一個平台帳號只能屬於一個品牌；如需改用其他平台帳號，請停用此帳號後新增新的帳號。
           </p>
         </div>
       </form>

@@ -129,7 +129,7 @@ export default function BrandsPage() {
         {error ? <ErrorMessage error={error} onRetry={() => void reload()} /> : null}
         <Card bodyClassName="">
           <div className="table-wrap">
-            <table className="table">
+            <table className="table table-cards">
               <thead>
                 <tr>
                   <th>品牌</th>
@@ -145,26 +145,27 @@ export default function BrandsPage() {
               <tbody>
                 {data.map((b) => (
                   <tr key={b.id} className={b.isActive ? undefined : 'row-muted'}>
-                    <td>
+                    <td className="card-title">
                       <div className="brands-name-cell">
                         <span className="brand-dot" style={{ background: b.color }} aria-hidden />
                         <span className="brands-name">{b.name}</span>
                         <span className="mono muted">{b.code}</span>
                       </div>
                     </td>
-                    <td>
+                    <td data-label="說明">
                       <div className="truncate brands-desc" title={b.description || undefined}>
                         {b.description || <span className="muted">—</span>}
                       </div>
                     </td>
-                    <td className="num">{formatNumber(b.accountCount ?? 0)}</td>
-                    <td className="num">{formatNumber(b.userCount ?? 0)}</td>
-                    <td className="num">{formatNumber(b.commentCount ?? 0)}</td>
-                    <td className="nowrap">剩 {b.nearDueMinutes} 分鐘</td>
-                    <td>
+                    <td className="num" data-label="社群帳號">{formatNumber(b.accountCount ?? 0)}</td>
+                    <td className="num" data-label="授權人員">{formatNumber(b.userCount ?? 0)}</td>
+                    <td className="num" data-label="留言數">{formatNumber(b.commentCount ?? 0)}</td>
+                    <td className="nowrap" data-label="即將超時門檻">剩 {b.nearDueMinutes} 分鐘</td>
+                    <td data-label="狀態">
                       <Badge tone={b.isActive ? 'green' : 'gray'}>{b.isActive ? '啟用中' : '已停用'}</Badge>
                     </td>
                     <td className="actions-cell">
+                      <span className="row-actions">
                       <Button
                         size="sm"
                         variant="ghost"
@@ -182,6 +183,7 @@ export default function BrandsPage() {
                       >
                         {b.isActive ? '停用' : '啟用'}
                       </Button>
+                      </span>
                     </td>
                   </tr>
                 ))}

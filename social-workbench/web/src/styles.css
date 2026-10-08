@@ -230,7 +230,7 @@ textarea {
     text-overflow: ellipsis;
   }
 }
-.menu-toggle {
+.topbar .menu-toggle {
   display: none;
 }
 .content {
@@ -268,7 +268,7 @@ textarea {
     z-index: 40;
     background: rgba(15, 20, 30, 0.35);
   }
-  .menu-toggle {
+  .topbar .menu-toggle {
     display: inline-flex;
   }
   .topbar {
@@ -1009,4 +1009,65 @@ textarea {
   width: 26px;
   height: 26px;
   font-size: 12px;
+}
+
+/* ---------- 列操作按鈕 ---------- */
+.row-actions {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+
+/* ---------- 手機版：表格改為卡片（table 加上 table-cards，td 加上 data-label） ---------- */
+@media (max-width: 640px) {
+  .table-cards thead {
+    display: none;
+  }
+  .table-cards,
+  .table-cards tbody,
+  .table-cards tr {
+    display: block;
+    width: 100%;
+  }
+  .table-cards tr {
+    padding: 10px 0;
+    border-bottom: 1px solid var(--border);
+  }
+  .table-cards tr:last-child {
+    border-bottom: none;
+  }
+  .table-cards td {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    min-width: 0;
+    padding: 4px 14px;
+    border: none;
+    text-align: right;
+  }
+  .table-cards td > * {
+    min-width: 0;
+  }
+  .table-cards td[data-label]::before {
+    content: attr(data-label);
+    flex: none;
+    color: var(--muted);
+    font-size: 12px;
+    text-align: left;
+  }
+  .table-cards td.card-title {
+    justify-content: flex-start;
+    text-align: left;
+    font-size: 15px;
+  }
+  .table-cards td.actions-cell {
+    justify-content: flex-end;
+    padding-top: 8px;
+  }
+  .table-cards tbody tr:hover td {
+    background: none;
+  }
 }

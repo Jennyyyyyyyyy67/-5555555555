@@ -189,7 +189,7 @@ export default function UsersPage() {
         ) : (
           <Card bodyClassName="">
             <div className="table-wrap">
-              <table className="table">
+              <table className="table table-cards">
                 <thead>
                   <tr>
                     <th>人員</th>
@@ -312,7 +312,7 @@ function UserTableRow({
 }) {
   return (
     <tr className={u.isActive ? undefined : 'row-muted'}>
-      <td>
+      <td className="card-title">
         <div className="users-person">
           <Avatar name={u.name} />
           <div className="users-person-text">
@@ -324,10 +324,10 @@ function UserTableRow({
           </div>
         </div>
       </td>
-      <td>
+      <td data-label="角色">
         <Badge tone={ROLE_TONE[u.role]}>{ROLE_LABELS[u.role]}</Badge>
       </td>
-      <td>
+      <td data-label="授權品牌">
         {u.role === 'admin' ? (
           <Badge>全部品牌</Badge>
         ) : u.brandIds.length === 0 ? (
@@ -348,10 +348,10 @@ function UserTableRow({
           </div>
         )}
       </td>
-      <td>
+      <td data-label="狀態">
         <Badge tone={u.isActive ? 'green' : 'gray'}>{u.isActive ? '啟用中' : '已停用'}</Badge>
       </td>
-      <td className="nowrap">
+      <td className="nowrap" data-label="最後登入">
         {u.lastLoginAt ? (
           <span title={formatDateTime(u.lastLoginAt)}>{formatRelative(u.lastLoginAt)}</span>
         ) : (

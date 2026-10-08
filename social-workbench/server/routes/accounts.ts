@@ -288,7 +288,7 @@ export function accountRoutes(): Router {
 
     for (const [field, current] of Object.entries(IMMUTABLE_FIELDS)) {
       if (field in body && String(body[field]) !== String(current(row))) {
-        throw badRequest('社群帳號建立後不可更換品牌或平台，以免品牌資料混在一起；請停用後重新新增');
+        throw badRequest('社群帳號建立後不可更換品牌或平台，以免品牌資料混在一起。一個平台帳號只能屬於一個品牌；如需改用其他平台帳號，請停用此帳號後新增新的帳號');
       }
     }
     const input = patchSchema.parse(body);
@@ -296,6 +296,10 @@ export function accountRoutes(): Router {
     const before = { name: row.name, handle: row.handle, isActive: row.is_active === 1 };
     const contentDiff = diffFields({ name: before.name, handle: before.handle }, { name: input.name, handle: input.handle });
     const activeChanged = input.isActive !== undefined && input.isActive !== before.isActive;
+    if (activeChanged && input.isActive) {
+      const brand = get<{ is_active: number }>(db, 'SELECT is_active FROM brands WHERE id = ?', [row.brand_id]);
+      if (brand?.is_active !== 1) throw badRequest('此帳號所屬的品牌已停用，無法啟用帳號；請先到品牌管理啟用此品牌');
+    }
     if (!contentDiff && !activeChanged) {
       res.json(toAccount(row) satisfies SocialAccount);
       return;

@@ -311,3 +311,15 @@ describe('社群帳號：測試連線', () => {
     expect(get(ctx.db, 'SELECT id FROM social_accounts WHERE id = ?', [ctx.fx.accountA])).toBeTruthy();
   });
 });
+
+describe('品牌停用時的帳號啟用', () => {
+  it('品牌已停用時不可啟用其社群帳號', async () => {
+    const ctx = createTestContext();
+    const admin = await ctx.loginAs('admin');
+    expect((await admin.patch(`/api/accounts/${ctx.fx.accountA}`).send({ isActive: false })).status).toBe(200);
+    expect((await admin.patch(`/api/brands/${ctx.fx.brandA}`).send({ isActive: false })).status).toBe(200);
+    const res = await admin.patch(`/api/accounts/${ctx.fx.accountA}`).send({ isActive: true });
+    expect(res.status).toBe(400);
+    expect(res.body.error.message).toContain('品牌已停用');
+  });
+});

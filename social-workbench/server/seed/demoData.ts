@@ -202,6 +202,7 @@ class DemoSeeder {
     await this.createBrands();
     await this.createUsers();
     await this.applyBrandSettings();
+    await this.createAutomationRules();
     await this.loadCategories();
 
     const drafts: Draft[] = [];
@@ -361,6 +362,37 @@ class DemoSeeder {
           brand_id: brand.id,
         },
       );
+    }
+  }
+
+  /** 自動回覆規則示範：日日咖啡開啟稱讚自動感謝與自動按讚；澄淨家電建立但未啟用；小森嬰品安全第一不設定 */
+  private async createAutomationRules(): Promise<void> {
+    const admin = this.adminUser();
+    const at = this.iso(this.ago(20 * DAY_MIN));
+    const rules: Array<{ code: string; name: string; description: string; action: 'auto_reply' | 'auto_like'; categories: string[]; platforms: string[]; active: boolean }> = [
+      { code: 'DAILY', name: '稱讚自動感謝', description: '顧客單純稱讚時，AI 依品牌語氣自動回覆感謝。', action: 'auto_reply', categories: ['praise'], platforms: [], active: true },
+      { code: 'DAILY', name: '正面留言自動按讚', description: 'Facebook 上的稱讚與純表情留言自動按讚。', action: 'auto_like', categories: ['praise', 'no_reply'], platforms: ['facebook'], active: true },
+      { code: 'CLEAR', name: '稱讚自動感謝', description: '建立好但尚未啟用，可在測試後再開啟。', action: 'auto_reply', categories: ['praise'], platforms: [], active: false },
+    ];
+    let order = 10;
+    for (const r of rules) {
+      const brand = this.brands.find((b) => b.code === r.code);
+      if (!brand) continue;
+      await insert(this.db, 'automation_rules', {
+        brand_id: brand.id,
+        name: r.name,
+        description: r.description,
+        action: r.action,
+        category_ids: [],
+        platforms: r.platforms,
+        conditions: { categories: r.categories, platforms: r.platforms, minConfidence: 0.85 },
+        is_active: r.active,
+        sort_order: (order += 10),
+        created_by_id: admin.id,
+        updated_by_id: admin.id,
+        created_at: at,
+        updated_at: at,
+      });
     }
   }
 

@@ -22,6 +22,10 @@ export const PERMISSIONS = {
   overrideLock: ['admin', 'supervisor'],
   /** 留言類型、時效、AI 風格、自動化規則等設定 */
   manageSettings: ['admin'],
+  /** 新增、修改、停用自動回覆規則 */
+  manageAutomation: ['admin'],
+  /** 查看自動回覆規則、用測試工具與模擬器試跑 */
+  testAutomation: ['admin', 'supervisor'],
   /** 審核知識與回覆範例 */
   approveKnowledge: ['admin', 'supervisor'],
   /** 數據看板、報表 */

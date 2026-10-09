@@ -136,6 +136,12 @@ export const IconKey = (p: IconProps) => (
   </Svg>
 );
 
+export const IconBolt = (p: IconProps) => (
+  <Svg {...p}>
+    <path d="M13 2.5L4.5 13.5H12l-1 8 8.5-11H12z" />
+  </Svg>
+);
+
 // ---------- 平台圖示 ----------
 const PLATFORM_STYLE: Record<string, { bg: string; text: string }> = {
   facebook: { bg: '#1877f2', text: 'f' },

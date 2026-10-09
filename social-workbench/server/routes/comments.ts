@@ -78,6 +78,7 @@ interface PreviewRow {
   first_response_at: string | null;
   completed_at: string | null;
   visibility: Visibility;
+  is_auto_handled: number;
 }
 
 function toPreview(r: PreviewRow): CommentPreview {
@@ -115,6 +116,7 @@ function toPreview(r: PreviewRow): CommentPreview {
     firstResponseAt: r.first_response_at,
     completedAt: r.completed_at,
     visibility: r.visibility,
+    isAutoHandled: r.is_auto_handled === 1,
   };
 }
 
@@ -186,7 +188,7 @@ export function commentRoutes(): Router {
          c.status, c.priority, cc.key AS category_key, cc.name AS category_name,
          c.tags, c.risk_flags, c.risk_level, c.sentiment, c.handling_mode,
          c.assignee_id, u.name AS assignee_name,
-         c.sla_due_at, c.first_response_at, c.completed_at, c.visibility
+         c.sla_due_at, c.first_response_at, c.completed_at, c.visibility, c.is_auto_handled
        FROM comments c
        JOIN brands b ON b.id = c.brand_id
        JOIN social_accounts sa ON sa.id = c.social_account_id

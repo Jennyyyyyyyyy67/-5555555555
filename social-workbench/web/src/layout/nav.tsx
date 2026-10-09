@@ -1,6 +1,6 @@
 import type { ReactNode } from 'react';
 import type { Permission } from '../../../shared/permissions';
-import { IconBuilding, IconDatabase, IconInbox, IconLink, IconUsers } from '../components/icons';
+import { IconBolt, IconBuilding, IconDatabase, IconInbox, IconLink, IconUsers } from '../components/icons';
 
 export interface NavItem {
   to: string;
@@ -19,6 +19,10 @@ export interface NavSection {
 export const NAV_SECTIONS: NavSection[] = [
   {
     items: [{ to: '/inbox', label: '收件匣', icon: <IconInbox /> }],
+  },
+  {
+    title: 'AI 與自動化',
+    items: [{ to: '/automation', label: '自動回覆', icon: <IconBolt />, perm: 'testAutomation' }],
   },
   {
     title: '設定',

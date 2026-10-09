@@ -1,0 +1,212 @@
+.am-tabs {
+  display: flex;
+  gap: 4px;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 16px;
+  overflow-x: auto;
+}
+.am-tab {
+  border: none;
+  background: none;
+  padding: 10px 14px;
+  font-weight: 500;
+  color: var(--text-2);
+  border-bottom: 2px solid transparent;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.am-tab.active {
+  color: var(--primary-text);
+  border-bottom-color: var(--primary);
+}
+.am-force-list {
+  margin: 0;
+  padding-left: 20px;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: 4px 20px;
+  font-size: 13px;
+}
+.am-force-list.compact {
+  grid-template-columns: 1fr;
+}
+.am-rule-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.am-rule {
+  display: flex;
+  gap: 16px;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 16px;
+  border-bottom: 1px solid var(--border);
+}
+.am-rule:last-child {
+  border-bottom: none;
+}
+.am-rule.off .am-rule-main {
+  opacity: 0.65;
+}
+.am-rule-main {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+.am-rule-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 16px;
+  color: var(--text-2);
+}
+.am-rule-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: none;
+}
+.am-choice {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+.am-choice-card {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  padding: 10px 12px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  cursor: pointer;
+}
+.am-choice-card.active {
+  border-color: var(--primary);
+  background: var(--primary-weak);
+}
+.am-choice-card input {
+  margin-top: 4px;
+  accent-color: var(--primary);
+}
+.am-check-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+  gap: 6px 12px;
+}
+.am-disabled {
+  opacity: 0.45;
+}
+.am-test-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+  align-items: start;
+}
+.am-chip {
+  border: 1px solid var(--border-strong);
+  background: var(--surface);
+  border-radius: 14px;
+  padding: 2px 10px;
+  font-size: 12px;
+  cursor: pointer;
+}
+.am-chip:hover {
+  border-color: var(--primary);
+  color: var(--primary-text);
+}
+.am-result {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 14px;
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+  background: var(--surface-2);
+}
+.am-result.auto {
+  border-color: #b7e3c3;
+  background: #f4fbf6;
+}
+.am-result.human {
+  border-color: #f5d3a1;
+  background: #fffaf2;
+}
+.am-result-head {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+  flex-wrap: wrap;
+}
+.am-analysis {
+  margin: 0;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px 16px;
+}
+.am-analysis dt {
+  font-size: 12px;
+  color: var(--muted);
+}
+.am-analysis dd {
+  margin: 2px 0 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.am-bar {
+  display: inline-block;
+  width: 60px;
+  height: 6px;
+  border-radius: 3px;
+  background: var(--border);
+  overflow: hidden;
+}
+.am-bar span {
+  display: block;
+  height: 100%;
+  background: var(--primary);
+}
+.am-reply {
+  margin: 0;
+  padding: 10px 12px;
+  border-left: 3px solid var(--primary);
+  background: var(--surface);
+  border-radius: 0 var(--radius) var(--radius) 0;
+  white-space: pre-line;
+}
+.am-recent {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.am-recent li {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 14px 16px;
+  border-bottom: 1px solid var(--border);
+}
+.am-recent li:last-child {
+  border-bottom: none;
+}
+@media (max-width: 900px) {
+  .am-test-grid {
+    grid-template-columns: 1fr;
+  }
+}
+@media (max-width: 640px) {
+  .am-rule {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  .am-rule-actions {
+    justify-content: space-between;
+  }
+  .am-choice {
+    grid-template-columns: 1fr;
+  }
+  .am-analysis {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}

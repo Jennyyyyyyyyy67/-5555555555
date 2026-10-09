@@ -92,6 +92,11 @@ function CommentRow({ c }: { c: CommentPreview }) {
       <div className="ib-state">
         <div className="ib-status">
           <Badge tone={STATUS_TONE[c.status]}>{STATUS_LABELS[c.status]}</Badge>
+          {c.isAutoHandled && (
+            <Badge tone="purple" title="由自動化規則處理">
+              AI 自動處理
+            </Badge>
+          )}
         </div>
         <div className="ib-assign">
           {c.assigneeName ? <span className="truncate">{c.assigneeName}</span> : <span className="muted">未指派</span>}

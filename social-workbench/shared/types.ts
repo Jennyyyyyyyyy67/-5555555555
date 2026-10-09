@@ -233,6 +233,8 @@ export interface CommentPreview {
   firstResponseAt: string | null;
   completedAt: string | null;
   visibility: Visibility;
+  /** 由 AI 自動處理（自動回覆或自動按讚結案） */
+  isAutoHandled: boolean;
 }
 
 export interface Paginated<T> {
@@ -302,4 +304,333 @@ export interface AuditLogEntry {
   after: unknown;
   detail: unknown;
   createdAt: string;
+}
+
+// ======================================================================
+// 階段 2：統一收件匣
+// ======================================================================
+
+/** 收件匣分頁 */
+export const INBOX_TABS = ['todo', 'mine', 'unassigned', 'waiting', 'follow_up', 'closed', 'all'] as const;
+export type InboxTab = (typeof INBOX_TABS)[number];
+export const INBOX_TAB_LABELS: Record<InboxTab, string> = {
+  todo: '待處理',
+  mine: '我的',
+  unassigned: '未指派',
+  waiting: '等待對方',
+  follow_up: '稍後追蹤',
+  closed: '已結束',
+  all: '全部',
+};
+
+/** 收件匣列表的一則留言 */
+export interface InboxItem extends CommentPreview {
+  slaMinutes: number | null;
+  /** 品牌設定的「即將超時」門檻（分鐘） */
+  nearDueMinutes: number;
+  needsHuman: boolean;
+  isAutoHandled: boolean;
+  isLiked: boolean;
+  likeCount: number;
+  handledById: number | null;
+  handledByName: string | null;
+  lockedById: number | null;
+  lockedByName: string | null;
+  lockExpiresAt: string | null;
+  followUpAt: string | null;
+  followUpNote: string;
+  replyCount: number;
+  /** 同一串中的其他留言數（不含品牌回覆） */
+  threadCount: number;
+}
+
+export interface InboxResponse extends Paginated<InboxItem> {
+  /** 伺服器目前時間，前端用來校正倒數 */
+  serverTime: string;
+  /** 各分頁筆數（依目前品牌範圍，不套用其他篩選） */
+  tabCounts: Record<InboxTab, number>;
+  /** 目前品牌範圍內：已超時、即將超時的數量 */
+  overdue: number;
+  nearDue: number;
+}
+
+export type ThreadEntry =
+  | {
+      kind: 'comment';
+      id: number;
+      parentId: number | null;
+      authorName: string;
+      body: string;
+      rating: number | null;
+      occurredAt: string;
+      status: CommentStatus;
+      visibility: Visibility;
+      isCurrent: boolean;
+    }
+  | {
+      kind: 'reply';
+      id: number;
+      commentId: number;
+      body: string;
+      sentAt: string;
+      senderName: string | null;
+      source: string;
+    };
+
+export interface ReplyEntry {
+  id: number;
+  body: string;
+  source: string;
+  sentAt: string;
+  senderId: number | null;
+  senderName: string | null;
+  statusAfter: CommentStatus | null;
+  deliveryStatus: 'sent' | 'failed';
+}
+
+export interface AssignmentEntry {
+  id: number;
+  fromName: string | null;
+  toName: string | null;
+  byName: string | null;
+  reason: string;
+  createdAt: string;
+}
+
+export interface NoteEntry {
+  id: number;
+  userId: number;
+  userName: string;
+  body: string;
+  mentions: number[];
+  createdAt: string;
+}
+
+export interface ActionEntry {
+  id: number;
+  action: string;
+  reason: string;
+  requestedByName: string | null;
+  confirmedByName: string | null;
+  result: 'success' | 'failed';
+  createdAt: string;
+}
+
+export interface CommentLock {
+  byId: number;
+  byName: string;
+  expiresAt: string;
+  isMine: boolean;
+}
+
+export interface CommentDetail {
+  comment: InboxItem & {
+    originalAssigneeId: number | null;
+    originalAssigneeName: string | null;
+    firstResponseType: 'human' | 'ai_auto' | null;
+    firstResponseByName: string | null;
+    authorExternalId: string;
+  };
+  post: {
+    id: number;
+    title: string;
+    body: string;
+    url: string;
+    contentType: ContentType;
+    isAd: boolean;
+    adCampaign: string | null;
+    publishedAt: string;
+  };
+  account: {
+    id: number;
+    name: string;
+    handle: string;
+    platform: string;
+    accountType: string;
+    capabilities: PlatformCapabilities;
+  };
+  thread: ThreadEntry[];
+  replies: ReplyEntry[];
+  assignments: AssignmentEntry[];
+  notes: NoteEntry[];
+  actions: ActionEntry[];
+  history: AuditLogEntry[];
+  lock: CommentLock | null;
+  /** 可指派、可 @ 的人員（有此品牌權限且啟用中） */
+  directory: UserDirectoryEntry[];
+  permissions: {
+    /** 可回覆、變更狀態、執行互動動作（沒有被別人鎖定） */
+    canHandle: boolean;
+    /** 可重新指派給任何人（主管、管理員） */
+    canReassign: boolean;
+    /** 可強制接手別人的處理中鎖定 */
+    canOverrideLock: boolean;
+  };
+  serverTime: string;
+}
+
+export interface ReplyInput {
+  body: string;
+  /** 回覆後的狀態：等待對方（還需要對方回應）或已完成 */
+  statusAfter: 'waiting' | 'done';
+}
+
+export interface NotificationItem {
+  id: number;
+  type: string;
+  message: string;
+  commentId: number | null;
+  brandId: number | null;
+  isRead: boolean;
+  createdAt: string;
+}
+
+export interface NotificationsResponse {
+  items: NotificationItem[];
+  unread: number;
+}
+
+// ---------- 留言類型與時效設定 ----------
+export interface CategoryInput {
+  name: string;
+  description?: string;
+  defaultSlaMinutes: number | null;
+  defaultPriority: Priority;
+  needsReply: boolean;
+}
+export type CategoryPatch = Partial<CategoryInput> & { isActive?: boolean };
+
+export interface BrandCategorySetting {
+  categoryId: number;
+  key: string;
+  name: string;
+  categoryActive: boolean;
+  defaultSlaMinutes: number | null;
+  slaMinutes: number | null;
+  slaEnabled: boolean;
+  handlingMode: HandlingMode;
+}
+
+// ---------- 模擬器 ----------
+export interface SimulateCommentInput {
+  postId: number;
+  /** 回覆某則留言（模擬對方追問）；不填則為新留言 */
+  parentCommentId?: number | null;
+  authorName: string;
+  body: string;
+  /** 階段 3 之前由模擬器指定分類（之後由 AI 判斷） */
+  categoryKey: string;
+  priority?: Priority;
+  rating?: number | null;
+  /** 幾分鐘前發生（預設 0，可模擬已等待一段時間的留言） */
+  minutesAgo?: number;
+}
+
+// ---------- 自動回覆 ----------
+export type AutomationAction = 'auto_reply' | 'auto_like';
+
+export interface AutomationRule {
+  id: number;
+  brandId: number;
+  brandName: string;
+  name: string;
+  description: string;
+  action: AutomationAction;
+  categories: string[];
+  platforms: string[];
+  minConfidence: number;
+  isActive: boolean;
+  sortOrder: number;
+  /** 近 7 天實際觸發次數 */
+  firedLast7Days: number;
+  updatedAt: string;
+  updatedByName: string | null;
+}
+
+export interface AutomationRuleInput {
+  brandId: number;
+  name: string;
+  description?: string;
+  action: AutomationAction;
+  categories: string[];
+  platforms: string[];
+  minConfidence: number;
+  isActive: boolean;
+}
+export type AutomationRulePatch = Partial<Omit<AutomationRuleInput, 'brandId'>>;
+
+export interface AutomationMeta {
+  /** 可設定自動回覆的類型（低風險、不需事實知識） */
+  autoReplyCategories: string[];
+  /** 可設定自動按讚的類型 */
+  autoLikeCategories: string[];
+  minConfidenceFloor: number;
+  /** 強制轉人工條件（不可關閉） */
+  forceHumanRules: Array<{ code: string; label: string }>;
+}
+
+export interface AutomationRulesResponse {
+  rules: AutomationRule[];
+  meta: AutomationMeta;
+}
+
+export interface AnalysisView {
+  categoryKey: string;
+  categoryName: string;
+  tags: string[];
+  riskFlags: RiskFlag[];
+  riskLevel: RiskLevel;
+  sentiment: Sentiment;
+  priority: Priority;
+  confidence: number;
+  isAmbiguous: boolean;
+  isMultiIssue: boolean;
+  reasons: string[];
+}
+
+export interface AutomationDecision {
+  analysis: AnalysisView;
+  forceHuman: Array<{ code: string; label: string }>;
+  matchedRule: { ruleId: number; ruleName: string; action: AutomationAction } | null;
+  decision: 'auto_replied' | 'auto_liked' | 'human';
+  explanation: string;
+  replyBody: string | null;
+}
+
+export interface AutomationTestInput {
+  brandId: number;
+  platform: string;
+  body: string;
+  rating?: number | null;
+}
+
+export interface SimulatePostOption {
+  id: number;
+  title: string;
+  contentType: ContentType;
+  isAd: boolean;
+  brandId: number;
+  brandName: string;
+  accountId: number;
+  accountName: string;
+  platform: string;
+}
+
+export interface SimulateResult extends AutomationDecision {
+  commentId: number;
+  slaMinutes: number | null;
+  slaDueAt: string | null;
+}
+
+export interface AutomationRecentItem {
+  id: number;
+  action: string;
+  summary: string;
+  createdAt: string;
+  commentId: number | null;
+  brandName: string;
+  commentBody: string | null;
+  authorName: string | null;
+  replyBody: string | null;
+  forceHuman: string[];
 }

@@ -15,6 +15,7 @@ import { audit, type AuditEntry } from '../services/audit';
 import {
   LOCK_TTL_MINUTES,
   PRIORITIES,
+  DEFAULT_CATEGORIES,
   PRIORITY_RANK,
   STATUS_LABELS,
   type CommentStatus,
@@ -27,6 +28,8 @@ import {
   type Visibility,
 } from '../../shared/constants';
 import { DEMO_BRANDS, DEMO_PASSWORD, DEMO_USERS } from './demo';
+
+const DEFAULT_CATEGORY_KEYS = new Set(DEFAULT_CATEGORIES.map((c) => c.key));
 import { BRAND_SCRIPTS, BRAND_SETTINGS, LAST_LOGIN_AGO } from './data';
 import type { AccountSeed, BrandScript, CommentSeed, Flow, PostSeed, UserKey } from './data/types';
 import type { SeedSummary } from '../../shared/types';
@@ -306,8 +309,7 @@ class DemoSeeder {
       await run(this.db, 'UPDATE brand_category_settings SET updated_at = ? WHERE brand_id = ?', [updatedAt, brand.id]);
 
       for (const tweak of s.categories) {
-        const cat = await get<{ id: number }>(this.db, 'SELECT id FROM comment_categories WHERE key = ?', [tweak.category]);
-        if (!cat) fail(`留言類型 ${tweak.category} 不存在`);
+        if (!DEFAULT_CATEGORY_KEYS.has(tweak.category)) fail(`留言類型 ${tweak.category} 不存在`);
         const patch: Record<string, unknown> = { updated_by_id: admin.id };
         if (tweak.slaMinutes !== undefined) {
           patch.sla_minutes = tweak.slaMinutes;
@@ -320,8 +322,8 @@ class DemoSeeder {
         await run(
           this.db,
           `UPDATE brand_category_settings SET ${cols.map((c) => `${c} = :${c}`).join(', ')}
-           WHERE brand_id = :brand_id AND category_id = :category_id`,
-          { ...patch, brand_id: brand.id, category_id: cat.id },
+           WHERE brand_id = :brand_id AND category_id = (SELECT id FROM comment_categories WHERE key = :category_key)`,
+          { ...patch, brand_id: brand.id, category_key: tweak.category },
         );
       }
 

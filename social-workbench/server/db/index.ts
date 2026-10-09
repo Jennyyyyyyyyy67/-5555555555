@@ -145,6 +145,15 @@ interface TxContext {
   db: DB;
   q: Queryable;
   depth: number;
+  batch?: BatchState;
+}
+
+/** 批次寫入狀態：insert() 先在記憶體分配 id 並排隊，之後合併成多列 INSERT 一次送出 */
+interface BatchState {
+  queue: { table: string; cols: string[]; values: unknown[] }[];
+  nextId: Map<string, number>;
+  /** 各資料表在整個批次中第一次出現的順序（送出時依此順序，確保被參照的資料先寫入） */
+  touched: Set<string>;
 }
 const txStore = new AsyncLocalStorage<TxContext>();
 
@@ -243,6 +252,7 @@ function convertSql(sql: string): { sql: string; names: (string | number)[] } {
 }
 
 async function query(db: DB, sql: string, params?: Params): Promise<QueryResult> {
+  await flushBatch(db);
   const { sql: text, names } = convertSql(sql);
   let values: unknown[] = [];
   if (Array.isArray(params)) {
@@ -261,6 +271,7 @@ async function query(db: DB, sql: string, params?: Params): Promise<QueryResult>
 
 /** 執行多個以分號分隔、沒有參數的 SQL 敘述 */
 export async function execSql(db: DB, sql: string): Promise<void> {
+  await flushBatch(db);
   await current(db).exec(sql);
 }
 
@@ -298,8 +309,80 @@ export async function insert(db: DB, table: string, row: Record<string, unknown>
   }`;
   const params: Record<string, unknown> = {};
   for (const c of cols) params[c] = row[c];
+  const batch = batchOf(db);
+  if (batch && hasId && row.id === undefined) {
+    // 批次模式：先分配 id，資料排隊，稍後合併送出（大幅減少與雲端資料庫的來回次數）
+    if (!batch.nextId.has(table)) {
+      const r = await query(db, `SELECT COALESCE(MAX(id), 0) AS m FROM ${assertIdent(table)}`);
+      batch.nextId.set(table, Number(r.rows[0].m) + 1);
+    }
+    const id = batch.nextId.get(table)!;
+    batch.nextId.set(table, id + 1);
+    batch.touched.add(table);
+    const allCols = ['id', ...cols];
+    batch.queue.push({ table, cols: allCols, values: [id, ...cols.map((c) => toSqlValue(row[c]))] });
+    return id;
+  }
   const r = await query(db, sql, params);
   return hasId ? Number(r.rows[0].id) : 0;
+}
+
+function batchOf(db: DB): BatchState | undefined {
+  const ctx = txStore.getStore();
+  return ctx && ctx.db === db ? ctx.batch : undefined;
+}
+
+/**
+ * 把排隊中的 insert 依資料表合併成多列 INSERT 送出。
+ * 資料表依「第一次出現的順序」送出（被參照的資料一定先寫入，外鍵仍成立）；缺少的欄位用 DEFAULT。
+ */
+async function flushBatch(db: DB): Promise<void> {
+  const batch = batchOf(db);
+  if (!batch || batch.queue.length === 0) return;
+  const queue = batch.queue.splice(0);
+  const byTable = new Map<string, typeof queue>([...batch.touched].map((t) => [t, []]));
+  for (const item of queue) {
+    const list = byTable.get(item.table);
+    if (list) list.push(item);
+    else byTable.set(item.table, [item]);
+  }
+  const q = current(db);
+  for (const [table, items] of byTable) {
+    if (items.length === 0) continue;
+    const cols = [...new Set(items.flatMap((it) => it.cols))];
+    const maxRows = Math.max(1, Math.floor(30_000 / cols.length));
+    for (let i = 0; i < items.length; i += maxRows) {
+      const values: unknown[] = [];
+      const rowsSql = items.slice(i, i + maxRows).map((it) => {
+        const byCol = new Map(it.cols.map((c, k) => [c, it.values[k]]));
+        return '(' + cols.map((c) => (byCol.has(c) ? (values.push(byCol.get(c)), `$${values.length}`) : 'DEFAULT')).join(', ') + ')';
+      });
+      await q.query(`INSERT INTO ${table} (${cols.join(', ')}) VALUES ${rowsSql.join(', ')}`, values);
+    }
+  }
+}
+
+/**
+ * 批次寫入模式（大量建立資料用，例如示範資料）：fn 內的 insert() 會合併送出。
+ * 必須在可寫入的空資料表或已知最大 id 的情況下使用；結束時會同步各資料表的 id 序號。
+ */
+export async function batchInserts<T>(db: DB, fn: () => Promise<T>): Promise<T> {
+  return tx(db, async () => {
+    const ctx = txStore.getStore()!;
+    const batch: BatchState = { queue: [], nextId: new Map(), touched: new Set() };
+    const result = await txStore.run({ ...ctx, batch }, async () => {
+      const r = await fn();
+      await flushBatch(db);
+      return r;
+    });
+    if (batch.touched.size) {
+      const parts = [...batch.touched].map(
+        (t) => `setval(pg_get_serial_sequence('${assertIdent(t)}', 'id'), (SELECT COALESCE(MAX(id), 1) FROM ${assertIdent(t)}))`,
+      );
+      await run(db, `SELECT ${parts.join(', ')}`);
+    }
+    return result;
+  });
 }
 
 /** 依物件欄位產生 UPDATE ... WHERE id = :id，回傳異動筆數。 */

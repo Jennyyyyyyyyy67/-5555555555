@@ -11,15 +11,18 @@ export async function bootstrapSystemData(db: DB): Promise<void> {
   const row = await get<{ n: number }>(db, 'SELECT COUNT(*) AS n FROM comment_categories');
   if (row && row.n > 0) return;
   const now = nowIso();
-  for (const [i, c] of DEFAULT_CATEGORIES.entries()) {
-    await run(
-      db,
-      `INSERT INTO comment_categories
-        (key, name, description, default_sla_minutes, default_priority, needs_reply, default_mode, is_system, is_active, sort_order, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, 1, 1, ?, ?, ?)`,
-      [c.key, c.name, c.description, c.slaMinutes, c.defaultPriority, c.needsReply ? 1 : 0, c.defaultMode, (i + 1) * 10, now, now],
-    );
-  }
+  const values: unknown[] = [];
+  const rows = DEFAULT_CATEGORIES.map((c, i) => {
+    values.push(c.key, c.name, c.description, c.slaMinutes, c.defaultPriority, c.needsReply ? 1 : 0, c.defaultMode, (i + 1) * 10, now, now);
+    return '(?, ?, ?, ?, ?, ?, ?, 1, 1, ?, ?, ?)';
+  });
+  await run(
+    db,
+    `INSERT INTO comment_categories
+       (key, name, description, default_sla_minutes, default_priority, needs_reply, default_mode, is_system, is_active, sort_order, created_at, updated_at)
+     VALUES ${rows.join(', ')}`,
+    values,
+  );
 }
 
 /**

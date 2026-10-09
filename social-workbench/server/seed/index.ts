@@ -1,5 +1,5 @@
 import type { DB } from '../db';
-import { get, resetDatabase, tx } from '../db';
+import { batchInserts, get, resetDatabase } from '../db';
 import { seedDemoData, type SeedSummary } from './demoData';
 import { mockFeed } from '../adapters/mock/mockFeed';
 
@@ -14,7 +14,7 @@ export interface SeedOptions {
 export async function resetAndSeed(db: DB, opts: SeedOptions = {}): Promise<SeedSummary> {
   await resetDatabase(db);
   mockFeed.clear();
-  return await tx(db, async () => await seedDemoData(db, { now: opts.now ?? new Date() }));
+  return await batchInserts(db, async () => await seedDemoData(db, { now: opts.now ?? new Date() }));
 }
 
 export async function hasAnyUser(db: DB): Promise<boolean> {

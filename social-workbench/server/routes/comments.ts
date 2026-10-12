@@ -16,6 +16,7 @@ import {
   type Visibility,
 } from '../../shared/constants';
 import type { CommentPreview, Paginated } from '../../shared/types';
+import { inboxRoutes } from './inbox';
 
 const DEFAULT_LIMIT = 50;
 const MAX_LIMIT = 200;
@@ -204,6 +205,9 @@ export function commentRoutes(): Router {
     const body: Paginated<CommentPreview> = { items: rows.map(toPreview), total, limit, offset };
     res.json(body);
   });
+
+  // 統一收件匣（列表、詳情與各種處理動作）；放在 /preview 之後，避免 /:id 吃掉 preview
+  r.use(inboxRoutes());
 
   return r;
 }

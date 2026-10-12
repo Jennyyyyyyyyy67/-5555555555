@@ -287,6 +287,8 @@ export function automationRoutes(): Router {
   // 模擬器：在模擬平台上「收到」一則新留言，走完整處理流程（adapter 取回 → AI 判斷 → 規則 → 自動回覆或交人工）
   const simulateSchema = z.object({
     postId: z.number().int().positive('請選擇貼文'),
+    /** 模擬對方在某則留言底下追問 */
+    parentCommentId: z.number().int().positive().nullable().optional(),
     authorName: z.string().trim().min(1, '請輸入留言者名稱').max(40),
     body: z.string().trim().min(1, '請輸入留言內容').max(1000, '留言最多 1000 個字'),
     rating: z.number().int().min(1).max(5).nullable().optional(),
@@ -301,12 +303,18 @@ export function automationRoutes(): Router {
       [input.postId],
     );
     if (!post || !scope.activeBrandIds.includes(post.brand_id)) throw notFound('找不到貼文');
-    const rating = post.content_type === 'business_profile' ? (input.rating ?? 5) : null;
+    const rating = post.content_type === 'business_profile' && !input.parentCommentId ? (input.rating ?? 5) : null;
+    let parentExternalId: string | null = null;
+    if (input.parentCommentId) {
+      const parent = await get<{ external_id: string; post_id: number }>(req.db, 'SELECT external_id, post_id FROM comments WHERE id = ?', [input.parentCommentId]);
+      if (!parent || parent.post_id !== post.id) throw badRequest('要回覆的留言不在這篇內容底下');
+      parentExternalId = parent.external_id;
+    }
     const externalId = `sim-${Date.now()}-${Math.floor(Math.random() * 1e6)}`;
     mockFeed.push(post.platform, post.account_external_id, {
       externalId,
       postExternalId: post.external_id,
-      parentExternalId: null,
+      parentExternalId,
       authorName: input.authorName,
       authorExternalId: `sim-author-${input.authorName}`,
       body: input.body,

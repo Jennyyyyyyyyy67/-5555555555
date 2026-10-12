@@ -256,18 +256,23 @@ function RuleRow({
       <div className="am-rule-main">
         <div className="row-wrap">
           <strong>{rule.name}</strong>
-          <Badge tone={rule.action === 'auto_reply' ? 'purple' : 'blue'}>{ACTION_LABELS[rule.action]}</Badge>
+          <Badge tone={rule.action === 'auto_reply' ? 'purple' : 'blue'}>{rule.matchType === 'keyword' ? '關鍵字回覆' : ACTION_LABELS[rule.action]}</Badge>
           {!rule.isActive && <Badge>已停用</Badge>}
         </div>
         {rule.description && <p className="muted small">{rule.description}</p>}
+        {rule.matchType === 'keyword' && <p className="small am-template">自動回覆：{rule.replyTemplate}</p>}
         <div className="am-rule-meta small">
-          <span>類型：{rule.categories.map(catName).join('、')}</span>
+          {rule.matchType === 'keyword' ? (
+            <span>關鍵字：{rule.keywords.join('、')}</span>
+          ) : (
+            <span>類型：{rule.categories.map(catName).join('、')}</span>
+          )}
           <span className="row" style={{ gap: 4 }}>
             平台：
             {rule.platforms.length === 0 ? '全部' : rule.platforms.map((p) => <PlatformIcon key={p} platform={p} size={16} />)}
             {rule.platforms.length > 0 && <span className="sr-only">{rule.platforms.map(platformLabel).join('、')}</span>}
           </span>
-          <span>AI 信心 ≥ {formatPercent(rule.minConfidence)}</span>
+          {rule.matchType !== 'keyword' && <span>AI 信心 ≥ {formatPercent(rule.minConfidence)}</span>}
           <span>近 7 天執行 {rule.firedLast7Days} 次</span>
           <span className="muted" title={formatDateTime(rule.updatedAt)}>
             {rule.updatedByName ? `${rule.updatedByName} ` : ''}更新於 {formatRelative(rule.updatedAt)}
@@ -310,13 +315,18 @@ function RuleModal({
     name: rule?.name ?? '',
     description: rule?.description ?? '',
     action: rule?.action ?? 'auto_reply',
+    matchType: rule?.matchType ?? 'keyword',
     categories: rule?.categories ?? ['praise'],
+    keywords: rule?.keywords ?? [],
+    replyTemplate: rule?.replyTemplate ?? '',
     platforms: rule?.platforms ?? [],
     minConfidence: rule?.minConfidence ?? am.minConfidenceFloor,
     isActive: rule?.isActive ?? true,
   }));
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  const [kwText, setKwText] = useState(() => (rule?.keywords ?? []).join('、'));
+  const isKeyword = form.matchType === 'keyword';
   const allowed = form.action === 'auto_reply' ? am.autoReplyCategories : am.autoLikeCategories;
   const categories = (meta?.categories ?? []).filter((c) => c.isActive);
   const set = <K extends keyof AutomationRuleInput>(k: K, v: AutomationRuleInput[K]) => setForm((f) => ({ ...f, [k]: v }));
@@ -324,12 +334,16 @@ function RuleModal({
   const submit = async (e: FormEvent) => {
     e.preventDefault();
     if (!form.name.trim()) return setError('請輸入規則名稱');
+    const keywords = kwText.split(/[、,，\n]/).map((k) => k.trim()).filter(Boolean);
     const cats = form.categories.filter((c) => allowed.includes(c));
-    if (cats.length === 0) return setError('請至少選擇一種留言類型');
+    if (isKeyword) {
+      if (keywords.length === 0) return setError('請至少輸入一個關鍵字');
+      if (!form.replyTemplate?.trim()) return setError('請輸入要自動回覆的內容');
+    } else if (cats.length === 0) return setError('請至少選擇一種留言類型');
     setSaving(true);
     setError(null);
     try {
-      const body = { ...form, categories: cats };
+      const body = isKeyword ? { ...form, action: 'auto_reply' as const, keywords, categories: [] } : { ...form, categories: cats };
       if (rule) {
         const { brandId: _b, ...patch } = body;
         await api.patch(`/automation/rules/${rule.id}`, patch);
@@ -381,6 +395,41 @@ function RuleModal({
         <Field label="說明" hint="給團隊看的備註，例如為什麼開啟這條規則">
           <Textarea rows={2} value={form.description} maxLength={300} onChange={(e) => set('description', e.target.value)} />
         </Field>
+        <Field label="觸發方式" required>
+          <div className="am-choice">
+            {(['keyword', 'category'] as const).map((m) => (
+              <label key={m} className={`am-choice-card ${form.matchType === m ? 'active' : ''}`}>
+                <input type="radio" name="matchType" checked={form.matchType === m} onChange={() => set('matchType', m)} />
+                <span>
+                  <strong>{m === 'keyword' ? '關鍵字＋固定回覆' : 'AI 依留言類型回覆'}</strong>
+                  <span className="muted small" style={{ display: 'block' }}>
+                    {m === 'keyword'
+                      ? '留言包含指定的字（例如「價格」「+1」），就自動回覆你寫好的內容。'
+                      : 'AI 判斷留言類型（例如稱讚），依品牌風格產生回覆或按讚。'}
+                  </span>
+                </span>
+              </label>
+            ))}
+          </div>
+        </Field>
+        {isKeyword && (
+          <>
+            <Field label="關鍵字" required hint="用「、」或逗號分隔；留言包含任一個字就會觸發（英文不分大小寫）。">
+              <TextInput value={kwText} onChange={(e) => setKwText(e.target.value)} placeholder="例如：價格、多少錢、+1、怎麼買" />
+            </Field>
+            <Field label="自動回覆內容" required hint="可用 {name} 代表留言者名稱。客訴、退款、敏感或負面留言即使包含關鍵字，也一定交給人工。">
+              <Textarea
+                rows={4}
+                maxLength={1000}
+                value={form.replyTemplate ?? ''}
+                onChange={(e) => set('replyTemplate', e.target.value)}
+                placeholder="例如：{name} 你好～價格與購買方式已經私訊給你囉，請查看訊息 😊"
+              />
+            </Field>
+          </>
+        )}
+        {!isKeyword && (
+        <>
         <Field label="動作" required>
           <div className="am-choice">
             {(['auto_reply', 'auto_like'] as AutomationAction[]).map((a) => (
@@ -413,6 +462,8 @@ function RuleModal({
             })}
           </div>
         </Field>
+        </>
+        )}
         <Field label="適用平台" hint="都不勾選代表全部平台。">
           <div className="row-wrap">
             {(meta?.platforms ?? []).map((p) => (

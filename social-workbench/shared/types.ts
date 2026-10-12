@@ -535,6 +535,7 @@ export interface SimulateCommentInput {
 
 // ---------- 自動回覆 ----------
 export type AutomationAction = 'auto_reply' | 'auto_like';
+export type RuleMatchType = 'category' | 'keyword';
 
 export interface AutomationRule {
   id: number;
@@ -543,7 +544,12 @@ export interface AutomationRule {
   name: string;
   description: string;
   action: AutomationAction;
+  /** category：依 AI 判斷的留言類型；keyword：留言包含關鍵字時回覆固定內容 */
+  matchType: RuleMatchType;
   categories: string[];
+  keywords: string[];
+  /** 關鍵字規則的回覆內容（{name} 會換成留言者名稱） */
+  replyTemplate: string;
   platforms: string[];
   minConfidence: number;
   isActive: boolean;
@@ -559,7 +565,10 @@ export interface AutomationRuleInput {
   name: string;
   description?: string;
   action: AutomationAction;
+  matchType?: RuleMatchType;
   categories: string[];
+  keywords?: string[];
+  replyTemplate?: string;
   platforms: string[];
   minConfidence: number;
   isActive: boolean;
@@ -572,6 +581,8 @@ export interface AutomationMeta {
   /** 可設定自動按讚的類型 */
   autoLikeCategories: string[];
   minConfidenceFloor: number;
+  /** 關鍵字規則仍會擋下的強制轉人工條件（客訴、退款、敏感、承諾、風險） */
+  keywordBlockingCodes: string[];
   /** 強制轉人工條件（不可關閉） */
   forceHumanRules: Array<{ code: string; label: string }>;
 }
@@ -817,4 +828,32 @@ export interface ReplyCheckResult {
 export interface StylePreviewInput {
   body: string;
   style: BrandStyleInput;
+}
+
+// ---------- 真實平台串接 ----------
+export interface InstagramStatus {
+  /** 已設定 INSTAGRAM_APP_ID / INSTAGRAM_APP_SECRET */
+  configured: boolean;
+  /** 要填到 Meta 後台「OAuth 重新導向 URI」的網址 */
+  redirectUri: string;
+  /** 要填到 Meta 後台 Webhook 的回呼網址 */
+  webhookUrl: string;
+  webhookConfigured: boolean;
+  accounts: Array<{
+    accountId: number;
+    username: string;
+    brandName: string;
+    tokenExpiresAt: string | null;
+    connectedAt: string;
+    lastSyncedAt: string | null;
+    status: string;
+  }>;
+}
+
+export interface SyncResult {
+  ok: boolean;
+  message: string;
+  newPosts: number;
+  newComments: number;
+  autoReplied: number;
 }

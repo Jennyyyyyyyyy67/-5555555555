@@ -21,6 +21,8 @@ import { getAccountType, getAdapter } from '../adapters/registry';
 import { badRequest, forbidden, HttpError } from '../lib/errors';
 import { nowIso } from '../lib/clock';
 import { needsKnowledge } from '../ai/knowledge';
+import { adapterAccountFor } from '../services/credentials';
+import { autoSyncLive } from '../services/liveSync';
 import { can } from '../../shared/permissions';
 import {
   COMMENT_STATUSES,
@@ -377,9 +379,6 @@ async function claimIfUnassigned(db: DB, c: CommentRow, user: AuthUser, reason: 
   return true;
 }
 
-function adapterAccount(a: { id: number; brand_id: number; platform: string; account_type: string; external_id: string; name: string }) {
-  return { id: a.id, brandId: a.brand_id, platform: a.platform, accountType: a.account_type, externalId: a.external_id, name: a.name };
-}
 
 export function inboxRoutes(): Router {
   const r = Router();
@@ -392,6 +391,8 @@ export function inboxRoutes(): Router {
     await releaseExpiredLocks(req.db, brandIds);
     const now = nowIso();
 
+    // 已連結真實平台（例如 Instagram）的帳號：每隔一段時間自動抓新留言
+    await autoSyncLive(req.db, brandIds);
     const tab = (qs(req.query.tab, '分頁') ?? 'todo') as InboxTab;
     if (!(INBOX_TABS as readonly string[]).includes(tab)) throw badRequest('分頁參數不正確');
     const where = [sqlIn('c.brand_id', brandIds), TAB_WHERE[tab]];
@@ -595,7 +596,7 @@ export function inboxRoutes(): Router {
     const post = (await get<{ external_id: string }>(db, 'SELECT external_id FROM posts WHERE id = ?', [c.post_id]))!;
     const adapter = getAdapter(account.platform);
     const sent = adapter
-      ? await adapter.replyToComment(adapterAccount(account), { externalId: c.external_id, postExternalId: post.external_id }, input.body)
+      ? await adapter.replyToComment(await adapterAccountFor(db, account), { externalId: c.external_id, postExternalId: post.external_id }, input.body)
       : ({ ok: false, error: '找不到平台 adapter' } as const);
     if (!sent.ok) throw new HttpError(502, 'platform_error', `平台回覆失敗：${sent.error}。請稍後再試。`);
 
@@ -863,7 +864,7 @@ export function inboxRoutes(): Router {
       (action === 'unhide' && c.visibility === 'visible');
     if (already) throw badRequest('目前已經是這個狀態');
     const post = (await get<{ external_id: string }>(db, 'SELECT external_id FROM posts WHERE id = ?', [c.post_id]))!;
-    const result = await getAdapter(account.platform)!.performAction(adapterAccount(account), { externalId: c.external_id, postExternalId: post.external_id }, action);
+    const result = await getAdapter(account.platform)!.performAction(await adapterAccountFor(db, account), { externalId: c.external_id, postExternalId: post.external_id }, action);
     if (!result.ok) throw new HttpError(502, 'platform_error', `平台執行失敗：${result.error}`);
 
     await tx(db, async () => {

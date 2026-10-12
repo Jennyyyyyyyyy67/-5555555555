@@ -10,6 +10,7 @@ import type { AIProvider, Analysis, BrandStyle } from '../ai/types';
 import { forceHumanReasons, MIN_AUTO_CONFIDENCE, type ForceHumanReason } from '../ai/safety';
 import { badRequest, HttpError, notFound } from '../lib/errors';
 import { needsKnowledge, searchKnowledge } from '../ai/knowledge';
+import { adapterAccountFor } from './credentials';
 import type { KnowledgeSearchResult } from '../../shared/types';
 
 /** 目前使用的 AI；階段 3 起可依設定切換 */
@@ -17,8 +18,13 @@ export const ai: AIProvider = mockProvider;
 
 
 export interface RuleConditions {
+  matchType: 'category' | 'keyword';
   /** 適用的留言類型 key */
   categories: string[];
+  /** 關鍵字規則：留言包含任一關鍵字就符合 */
+  keywords: string[];
+  /** 關鍵字規則：回覆內容（業主自己寫，{name} 換成留言者） */
+  replyTemplate: string;
   /** 適用平台；空陣列代表全部 */
   platforms: string[];
   /** 最低 AI 信心（不得低於系統下限） */
@@ -39,7 +45,13 @@ export interface RuleMatch {
   ruleId: number;
   ruleName: string;
   action: 'auto_reply' | 'auto_like';
+  matchType?: 'category' | 'keyword';
+  matchedKeyword?: string;
+  replyTemplate?: string;
 }
+
+/** 關鍵字規則由業主寫好回覆內容，不需要 AI 知識；但客訴、退款、敏感、承諾、風險仍一律轉人工 */
+export const KEYWORD_BLOCKING_CODES = ['sensitive', 'complaint', 'refund', 'promise', 'risk'];
 
 export type Decision = 'auto_replied' | 'auto_liked' | 'human';
 
@@ -68,6 +80,9 @@ interface Context {
 export function parseConditions(text: string): RuleConditions {
   const c = parseJson<Partial<RuleConditions>>(text, {});
   return {
+    matchType: c.matchType === 'keyword' ? 'keyword' : 'category',
+    keywords: Array.isArray(c.keywords) ? c.keywords.filter((k) => typeof k === 'string' && k.trim()) : [],
+    replyTemplate: typeof c.replyTemplate === 'string' ? c.replyTemplate : '',
     categories: Array.isArray(c.categories) ? c.categories : [],
     platforms: Array.isArray(c.platforms) ? c.platforms : [],
     minConfidence: Math.max(MIN_AUTO_CONFIDENCE, Number(c.minConfidence ?? MIN_AUTO_CONFIDENCE)),
@@ -93,15 +108,26 @@ async function loadStyle(db: DB, brandId: number): Promise<BrandStyle> {
   };
 }
 
-async function findRule(db: DB, brandId: number, platform: string, a: Analysis): Promise<RuleMatch | null> {
+async function findRule(db: DB, brandId: number, platform: string, a: Analysis, body = ''): Promise<RuleMatch | null> {
   const rules = await all<RuleRow>(
     db,
     'SELECT id, brand_id, name, action, conditions, is_active, sort_order FROM automation_rules WHERE brand_id = ? AND is_active = 1 ORDER BY sort_order, id',
     [brandId],
   );
+  // 關鍵字規則優先（業主明確指定的情境）
+  const text = body.toLowerCase();
+  for (const r of rules) {
+    if (r.action !== 'auto_reply') continue;
+    const c = parseConditions(r.conditions);
+    if (c.matchType !== 'keyword' || !c.replyTemplate.trim()) continue;
+    if (c.platforms.length && !c.platforms.includes(platform)) continue;
+    const kw = c.keywords.find((k) => text.includes(k.trim().toLowerCase()));
+    if (kw) return { ruleId: r.id, ruleName: r.name, action: 'auto_reply', matchType: 'keyword', matchedKeyword: kw, replyTemplate: c.replyTemplate };
+  }
   for (const r of rules) {
     if (r.action !== 'auto_reply' && r.action !== 'auto_like') continue;
     const c = parseConditions(r.conditions);
+    if (c.matchType === 'keyword') continue;
     if (!c.categories.includes(a.categoryKey)) continue;
     if (c.platforms.length && !c.platforms.includes(platform)) continue;
     if (a.confidence < c.minConfidence) continue;
@@ -125,7 +151,7 @@ export async function decide(
   const cat = await get<{ name: string }>(db, 'SELECT name FROM comment_categories WHERE key = ?', [analysis.categoryKey]);
   const knowledge = await searchKnowledge(db, { brandId: input.brandId, body: input.body, categoryKey: analysis.categoryKey, categoryName: cat?.name ?? analysis.categoryKey });
   const forceHuman = forceHumanReasons(analysis, { needsKnowledge: needsKnowledge(analysis.categoryKey), hasHits: knowledge.hits.length > 0 });
-  const matchedRule = await findRule(db, input.brandId, input.platform, analysis);
+  const matchedRule = await findRule(db, input.brandId, input.platform, analysis, input.body);
   const caps = getAccountType(input.platform, input.accountType)?.capabilities;
 
   let decision: Decision = 'human';
@@ -133,6 +159,19 @@ export async function decide(
   let explanation: string;
   if (!matchedRule) {
     explanation = result_reason(analysis.categoryKey, forceHuman.length > 0);
+  } else if (matchedRule.action === 'auto_reply' && matchedRule.matchType === 'keyword') {
+    const blocking = forceHuman.filter((r) => KEYWORD_BLOCKING_CODES.includes(r.code));
+    if (analysis.categoryKey === 'spam' || analysis.categoryKey === 'malicious') {
+      explanation = `留言包含關鍵字「${matchedRule.matchedKeyword}」，但看起來是垃圾或惡意留言，不自動回覆，交給人工處理。`;
+    } else if (blocking.length) {
+      explanation = `留言包含關鍵字「${matchedRule.matchedKeyword}」，符合規則「${matchedRule.ruleName}」，但因安全檢查轉人工：${blocking.map((r) => r.label).join('；')}。`;
+    } else if (!caps?.reply) {
+      explanation = `符合規則「${matchedRule.ruleName}」，但此平台不支援回覆，交給人工處理。`;
+    } else {
+      decision = 'auto_replied';
+      replyBody = matchedRule.replyTemplate!.replaceAll('{name}', input.authorName.replace(/^@/, '')).trim();
+      explanation = `留言包含關鍵字「${matchedRule.matchedKeyword}」，依規則「${matchedRule.ruleName}」自動回覆業主設定的內容。`;
+    }
   } else if (matchedRule.action === 'auto_reply') {
     if (forceHuman.length) {
       explanation = `符合規則「${matchedRule.ruleName}」，但因安全檢查轉人工：${forceHuman.map((r) => r.label).join('；')}。`;
@@ -183,6 +222,7 @@ export async function processIncoming(
   db: DB,
   ctx: Context,
   c: { postId: number; parentCommentId: number | null; externalId: string; authorName: string; authorExternalId: string; body: string; rating: number | null; occurredAt: string },
+  opts: { allowAutomation?: boolean } = {},
 ): Promise<PipelineResult> {
   const now = nowIso();
   const result = await decide(db, {
@@ -196,6 +236,11 @@ export async function processIncoming(
     rating: c.rating,
     seed: Date.parse(c.occurredAt) / 1000,
   });
+  if (opts.allowAutomation === false && result.decision !== 'human') {
+    result.decision = 'human';
+    result.replyBody = null;
+    result.explanation = '這是連結帳號之前就存在的留言，不自動處理，交給人工判斷。';
+  }
   const a = result.analysis;
 
   const category = await get<{ id: number }>(db, 'SELECT id FROM comment_categories WHERE key = ?', [a.categoryKey]);
@@ -316,7 +361,7 @@ export async function processIncoming(
       const adapter = getAdapter(ctx.account.platform);
       const sent = adapter
         ? await adapter.replyToComment(
-            { id: ctx.account.id, brandId: ctx.brand.id, platform: ctx.account.platform, accountType: ctx.account.account_type, externalId: ctx.account.external_id, name: ctx.account.name },
+            await adapterAccountFor(db, { ...ctx.account, brand_id: ctx.brand.id }),
             { externalId: c.externalId, postExternalId: '' },
             result.replyBody,
           )
@@ -422,36 +467,87 @@ export async function processIncoming(
 /**
  * 透過平台 adapter 取回新留言並逐則處理（模擬器把留言放進模擬平台後呼叫；日後接真實平台也是同一個流程）。
  */
+export interface SyncSummary {
+  newPosts: number;
+  newComments: number;
+  autoReplied: number;
+  results: PipelineResult[];
+}
+
+const isUniqueViolation = (e: unknown) => (e as { code?: string })?.code === '23505';
+
 export async function syncAccount(db: DB, accountId: number): Promise<PipelineResult[]> {
+  return (await syncAccountDetailed(db, accountId)).results;
+}
+
+/**
+ * 透過平台 adapter 取回貼文與新留言並逐則處理（模擬器、真實平台共用同一個流程）。
+ * 已存在的留言會略過；自己帳號發出的回覆不會當成新留言；連結帳號之前的舊留言不會自動回覆。
+ */
+export async function syncAccountDetailed(db: DB, accountId: number): Promise<SyncSummary> {
   const ctx = await loadContext(db, accountId);
   if (ctx.brand.is_active !== 1) throw badRequest('品牌已停用，無法接收新留言');
   const adapter = getAdapter(ctx.account.platform);
   if (!adapter) throw new HttpError(500, 'no_adapter', '找不到平台 adapter');
-  const incoming = await adapter.fetchComments(
-    { id: ctx.account.id, brandId: ctx.brand.id, platform: ctx.account.platform, accountType: ctx.account.account_type, externalId: ctx.account.external_id, name: ctx.account.name },
-    { since: null },
+  const acct = await adapterAccountFor(db, { ...ctx.account, brand_id: ctx.brand.id });
+  const cred = acct.accessToken ? await get<{ connected_at: string; username: string }>(db, 'SELECT connected_at, username FROM account_credentials WHERE account_id = ?', [accountId]) : undefined;
+
+  let newPosts = 0;
+  if (adapter.fetchPosts) {
+    const now = nowIso();
+    for (const p of await adapter.fetchPosts(acct)) {
+      const r = await run(
+        db,
+        `INSERT INTO posts (brand_id, social_account_id, external_id, content_type, is_ad, ad_campaign, title, body, url, published_at, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT (social_account_id, external_id) DO NOTHING`,
+        [ctx.brand.id, ctx.account.id, p.externalId, p.contentType, p.isAd ? 1 : 0, p.adCampaign ?? null, p.title, p.body, p.url, p.publishedAt, now],
+      );
+      newPosts += r.changes;
+    }
+  }
+
+  const incoming = await adapter.fetchComments(acct, { since: null });
+  const known = new Set(
+    incoming.length
+      ? (await all<{ external_id: string }>(db, 'SELECT external_id FROM comments WHERE social_account_id = ?', [ctx.account.id])).map((r) => r.external_id)
+      : [],
   );
+  const ownName = cred?.username ? `@${cred.username}`.toLowerCase() : null;
   const results: PipelineResult[] = [];
   for (const item of incoming) {
+    if (known.has(item.externalId)) continue;
+    // 自己帳號的留言（例如系統送出的回覆）不是要處理的留言
+    if (item.authorExternalId === ctx.account.external_id || (ownName && item.authorName.toLowerCase() === ownName)) continue;
     const post = await get<{ id: number }>(db, 'SELECT id FROM posts WHERE social_account_id = ? AND external_id = ?', [ctx.account.id, item.postExternalId]);
     if (!post) continue;
     const parent = item.parentExternalId
       ? await get<{ id: number }>(db, 'SELECT id FROM comments WHERE social_account_id = ? AND external_id = ?', [ctx.account.id, item.parentExternalId])
       : undefined;
-    results.push(
-      await processIncoming(db, ctx, {
-        postId: post.id,
-        parentCommentId: parent?.id ?? null,
-        externalId: item.externalId,
-        authorName: item.authorName,
-        authorExternalId: item.authorExternalId,
-        body: item.body,
-        rating: item.rating ?? null,
-        occurredAt: item.occurredAt,
-      }),
-    );
+    try {
+      results.push(
+        await processIncoming(
+          db,
+          ctx,
+          {
+            postId: post.id,
+            parentCommentId: parent?.id ?? null,
+            externalId: item.externalId,
+            authorName: item.authorName,
+            authorExternalId: item.authorExternalId,
+            body: item.body,
+            rating: item.rating ?? null,
+            occurredAt: item.occurredAt,
+          },
+          { allowAutomation: !cred || item.occurredAt >= cred.connected_at },
+        ),
+      );
+    } catch (err) {
+      if (!isUniqueViolation(err)) throw err; // 同時有另一個同步已寫入這則留言
+    }
+    known.add(item.externalId);
   }
-  return results;
+  await run(db, 'UPDATE social_accounts SET last_synced_at = ?, status = ? WHERE id = ?', [nowIso(), 'connected', accountId]);
+  return { newPosts, newComments: results.length, autoReplied: results.filter((r) => r.decision === 'auto_replied').length, results };
 }
 
 export { mockFeed };

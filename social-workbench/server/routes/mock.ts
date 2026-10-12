@@ -1,6 +1,6 @@
 import { Router, type Request, type Response } from 'express';
 import { z } from 'zod';
-import { all, get, sqlIn, tx, type DB } from '../db';
+import { all, get, insert, run, sqlIn, tx, type DB } from '../db';
 import { SESSION_COOKIE } from '../config';
 import { authed, requirePermission } from '../auth/middleware';
 import { computeScope } from '../auth/scope';
@@ -93,8 +93,50 @@ export function mockRoutes(): Router {
 
     // resetAndSeed 會 DROP 所有資料表（含 sessions、users）後重建，不能包在外層交易中
     // （交易中無法關閉外鍵檢查）；示範資料本身在 resetAndSeed 內以交易建立。
+    // 保留已連結的真實平台帳號（例如 Instagram），重設後不用重新登入授權
+    const live = await all<{
+      brand_code: string; platform: string; account_type: string; name: string; handle: string; external_id: string; adapter_key: string;
+      provider: string; access_token_enc: string; token_expires_at: string | null; scopes: string; platform_user_id: string; username: string;
+    }>(
+      db,
+      `SELECT b.code AS brand_code, a.platform, a.account_type, a.name, a.handle, a.external_id, a.adapter_key,
+              c.provider, c.access_token_enc, c.token_expires_at, c.scopes, c.platform_user_id, c.username
+       FROM account_credentials c JOIN social_accounts a ON a.id = c.account_id JOIN brands b ON b.id = a.brand_id`,
+    ).catch(() => []);
+
     const summary = await resetAndSeed(db);
     resetAllLoginFailures();
+    if (live.length) {
+      const now = new Date().toISOString();
+      await tx(db, async () => {
+        for (const l of live) {
+          const brand =
+            (await get<{ id: number }>(db, 'SELECT id FROM brands WHERE code = ?', [l.brand_code])) ??
+            (await get<{ id: number }>(db, 'SELECT id FROM brands WHERE is_active = 1 ORDER BY id LIMIT 1'));
+          if (!brand) continue;
+          const accountId = await insert(db, 'social_accounts', {
+            brand_id: brand.id,
+            platform: l.platform,
+            account_type: l.account_type,
+            name: l.name,
+            handle: l.handle,
+            external_id: l.external_id,
+            adapter_key: l.adapter_key,
+            status: 'connected',
+            is_active: true,
+            created_at: now,
+            updated_at: now,
+          });
+          // 連結時間設為現在：重新匯入的舊留言不會再被自動回覆一次
+          await run(
+            db,
+            `INSERT INTO account_credentials (account_id, provider, access_token_enc, token_expires_at, scopes, platform_user_id, username, connected_at, updated_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            [accountId, l.provider, l.access_token_enc, l.token_expires_at, l.scopes, l.platform_user_id, l.username, now, now],
+          );
+        }
+      });
+    }
 
     // 舊的 session 已隨資料表一起清除；若同一個 Email 仍存在於示範資料中，就幫他建立新的登入狀態
     const row = await get<{ id: number; name: string; email: string; role: AuthUser['role']; is_active: number }>(

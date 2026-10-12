@@ -7,6 +7,7 @@ import type { AuthUser } from '../auth/session';
 import { audit, diffFields } from '../services/audit';
 import { badRequest, conflict, notFound } from '../lib/errors';
 import { nowIso } from '../lib/clock';
+import { adapterAccountFor } from '../services/credentials';
 import { adapterKeyFor, getAccountType, getAdapter } from '../adapters/registry';
 import { ACCOUNT_TYPE_LABELS, PLATFORM_LABELS, type AccountStatus } from '../../shared/constants';
 import type {
@@ -103,14 +104,7 @@ async function testAndRecord(db: DB, row: AccountRow, user: AuthUser): Promise<C
     result = { ok: false, message: `系統目前沒有「${platformLabel(row.platform)}」的串接模組，無法測試連線，請聯絡系統管理員` };
   } else {
     try {
-      const r = await adapter.testConnection({
-        id: row.id,
-        brandId: row.brand_id,
-        platform: row.platform,
-        accountType: row.account_type,
-        externalId: row.external_id,
-        name: row.name,
-      });
+      const r = await adapter.testConnection(await adapterAccountFor(db, row));
       result = { ok: r.ok === true, message: String(r.message ?? '') };
     } catch (err) {
       console.error('[accounts] testConnection 失敗', err);

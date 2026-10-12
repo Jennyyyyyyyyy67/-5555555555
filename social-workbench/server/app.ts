@@ -25,7 +25,15 @@ export function createApp(db: DB, opts: AppOptions = {}): Express {
     next();
   });
 
-  app.use('/api', express.json({ limit: '1mb' }), (_req, res, next) => {
+  app.use(
+    '/api',
+    express.json({
+      limit: '1mb',
+      // Webhook 需要原始內容驗證簽章
+      verify: (req, _res, buf) => {
+        if ((req as { url?: string }).url?.startsWith('/webhooks/')) (req as unknown as { rawBody: Buffer }).rawBody = Buffer.from(buf);
+      },
+    }), (_req, res, next) => {
     res.setHeader('Cache-Control', 'no-store');
     next();
   });

@@ -11,11 +11,14 @@ import { auditRoutes } from './audit';
 import { automationRoutes } from './automation';
 import { notificationRoutes } from './inbox';
 import { brandCategorySettingRoutes, categoryRoutes } from './categories';
+import { integrationRoutes, webhookRoutes } from './integrations';
 
 /** 所有 API 路由。除了 /auth 之外都需要登入；更細的角色與品牌權限由各路由自行檢查。 */
 export function apiRouter(): Router {
   const r = Router();
   r.use('/auth', authRoutes());
+  r.use('/webhooks', webhookRoutes());
+  r.use('/integrations', integrationRoutes());
   r.use('/meta', requireAuth(), metaRoutes());
   r.use('/brands/:id/category-settings', requireAuth(), brandCategorySettingRoutes());
   r.use('/brands', requireAuth(), brandRoutes());

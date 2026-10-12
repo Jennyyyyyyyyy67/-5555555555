@@ -15,6 +15,8 @@ export interface AdapterAccount {
   accountType: string;
   externalId: string;
   name: string;
+  /** 真實平台的存取權杖（只有已透過 OAuth 連結的帳號才有；模擬帳號為空） */
+  accessToken?: string | null;
 }
 
 /** 平台上的一則留言（尚未寫入資料庫的原始格式） */
@@ -61,6 +63,8 @@ export interface PlatformAdapter {
 
   /** 測試帳號連線 */
   testConnection(account: AdapterAccount): Promise<{ ok: boolean; message: string }>;
+  /** 取得帳號最近的貼文（真實平台用；模擬 adapter 不需實作） */
+  fetchPosts?(account: AdapterAccount): Promise<IncomingPost[]>;
   /** 取得某時間點之後的新留言 */
   fetchComments(account: AdapterAccount, opts: { since?: string | null }): Promise<IncomingComment[]>;
   /** 在平台上回覆留言 */

@@ -36,6 +36,7 @@ import type {
   SocialAccount,
   TestConnectionResponse,
 } from '../../../../shared/types';
+import { InstagramConnect } from './InstagramConnect';
 import './accounts.css';
 
 const STATUS_TONE: Record<AccountStatus, BadgeTone> = { connected: 'green', disconnected: 'gray', error: 'red' };
@@ -128,7 +129,7 @@ export default function AccountsPage() {
     <>
       <PageHeader
         title="社群帳號"
-        description="各品牌綁定的社群平台帳號。目前全部透過「模擬連線」運作；日後串接真實平台 API 時，只需替換該平台的 adapter，其他功能不受影響。"
+        description="各品牌綁定的社群平台帳號。Instagram 可連結真實帳號；其他平台與示範帳號目前透過「模擬連線」運作，日後串接時只需替換該平台的 adapter。"
         actions={
           canManage && (
             <Button variant="primary" icon={<IconPlus />} onClick={() => setAddOpen(true)}>
@@ -140,6 +141,8 @@ export default function AccountsPage() {
 
       <div className="acc-page">
         {!canManage && <Alert tone="info">唯讀檢視：如需新增或修改社群帳號，請聯絡管理員。</Alert>}
+
+        <InstagramConnect onChanged={() => void reload()} />
 
         <div className="toolbar">
           <Select aria-label="篩選平台" value={platformFilter} onChange={(e) => setPlatformFilter(e.target.value)}>

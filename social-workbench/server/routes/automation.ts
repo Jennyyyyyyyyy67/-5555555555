@@ -7,7 +7,8 @@ import { audit, diffFields } from '../services/audit';
 import { badRequest, notFound } from '../lib/errors';
 import { addMinutes, nowIso } from '../lib/clock';
 import { getAdapter, listAdapters } from '../adapters/registry';
-import { decide, mockFeed, parseConditions, syncAccount, type PipelineResult } from '../services/pipeline';
+import { decide, KEYWORD_BLOCKING_CODES, mockFeed, parseConditions, syncAccount, type PipelineResult } from '../services/pipeline';
+import { loadFullStyle } from '../ai/compose';
 import { FORCE_HUMAN_RULES, MIN_AUTO_CONFIDENCE, AUTO_REPLY_ALLOWED_CATEGORIES } from '../ai/safety';
 import type {
   AutomationDecision,
@@ -24,6 +25,7 @@ export const AUTOMATION_META: AutomationMeta = {
   autoReplyCategories: [...AUTO_REPLY_ALLOWED_CATEGORIES],
   autoLikeCategories: AUTO_LIKE_CATEGORIES,
   minConfidenceFloor: MIN_AUTO_CONFIDENCE,
+  keywordBlockingCodes: KEYWORD_BLOCKING_CODES,
   forceHumanRules: FORCE_HUMAN_RULES,
 };
 
@@ -51,7 +53,10 @@ function toRule(r: RuleListRow): AutomationRule {
     name: r.name,
     description: r.description,
     action: r.action,
+    matchType: c.matchType,
     categories: c.categories,
+    keywords: c.keywords,
+    replyTemplate: c.replyTemplate,
     platforms: c.platforms,
     minConfidence: c.minConfidence,
     isActive: r.is_active === 1,
@@ -80,16 +85,37 @@ const ruleFields = {
   name: z.string().trim().min(1, '請輸入規則名稱').max(60, '規則名稱最多 60 個字'),
   description: z.string().trim().max(300, '說明最多 300 個字').optional(),
   action: z.enum(['auto_reply', 'auto_like'], { errorMap: () => ({ message: '請選擇自動化動作' }) }),
-  categories: z.array(z.string()).min(1, '請至少選擇一種留言類型'),
+  matchType: z.enum(['category', 'keyword']).default('category'),
+  categories: z.array(z.string()).default([]),
+  keywords: z.array(z.string().trim().min(1).max(40, '每個關鍵字最多 40 個字')).max(30, '關鍵字最多 30 個').default([]),
+  replyTemplate: z.string().trim().max(1000, '回覆內容最多 1000 個字').default(''),
   platforms: z.array(z.string()).default([]),
   minConfidence: z.number({ invalid_type_error: '信心門檻格式不正確' }).min(MIN_AUTO_CONFIDENCE, `信心門檻不可低於 ${Math.round(MIN_AUTO_CONFIDENCE * 100)}%`).max(1, '信心門檻最高 100%'),
   isActive: z.boolean().default(true),
 };
 const createSchema = z.object({ brandId: z.number().int().positive('請選擇品牌'), ...ruleFields });
-const patchSchema = z.object(ruleFields).partial();
+const patchSchema = z
+  .object({ ...ruleFields, matchType: z.enum(['category', 'keyword']), categories: z.array(z.string()), keywords: z.array(z.string().trim().min(1).max(40)).max(30), replyTemplate: z.string().trim().max(1000) })
+  .partial();
 
 /** 不可妥協：自動回覆只能用在低風險類型；平台必須存在 */
-function validateRule(action: 'auto_reply' | 'auto_like', categories: string[], platforms: string[]): void {
+async function validateRule(
+  db: DB,
+  brandId: number,
+  r: { action: 'auto_reply' | 'auto_like'; matchType: 'category' | 'keyword'; categories: string[]; keywords: string[]; replyTemplate: string; platforms: string[] },
+): Promise<void> {
+  const { action, categories, platforms } = r;
+  const known = listAdapters().map((a) => a.platform);
+  if (platforms.some((p) => !known.includes(p))) throw badRequest('不支援的平台', { field: 'platforms' });
+  if (r.matchType === 'keyword') {
+    if (action !== 'auto_reply') throw badRequest('關鍵字規則只能用於自動回覆', { field: 'action' });
+    if (r.keywords.length === 0) throw badRequest('請至少輸入一個關鍵字', { field: 'keywords' });
+    if (!r.replyTemplate.trim()) throw badRequest('請輸入要自動回覆的內容', { field: 'replyTemplate' });
+    const banned = (await loadFullStyle(db, brandId)).bannedWords.filter((w) => w && r.replyTemplate.includes(w));
+    if (banned.length) throw badRequest(`回覆內容含有品牌禁用詞：${banned.join('、')}`, { field: 'replyTemplate' });
+    return;
+  }
+  if (categories.length === 0) throw badRequest('請至少選擇一種留言類型', { field: 'categories' });
   const allowed = action === 'auto_reply' ? AUTOMATION_META.autoReplyCategories : AUTO_LIKE_CATEGORIES;
   const bad = categories.filter((c) => !allowed.includes(c));
   if (bad.length) {
@@ -100,8 +126,6 @@ function validateRule(action: 'auto_reply' | 'auto_like', categories: string[], 
       { field: 'categories' },
     );
   }
-  const known = listAdapters().map((a) => a.platform);
-  if (platforms.some((p) => !known.includes(p))) throw badRequest('不支援的平台', { field: 'platforms' });
 }
 
 function decisionView(r: Omit<PipelineResult, 'commentId' | 'slaMinutes' | 'slaDueAt'>): AutomationDecision {
@@ -131,7 +155,7 @@ export function automationRoutes(): Router {
     const input = createSchema.parse(req.body);
     const brand = await get<{ id: number; name: string; is_active: number }>(req.db, 'SELECT id, name, is_active FROM brands WHERE id = ?', [input.brandId]);
     if (!brand || !scope.brandIds.includes(brand.id)) throw notFound('找不到品牌');
-    validateRule(input.action, input.categories, input.platforms);
+    await validateRule(req.db, brand.id, input);
     const now = nowIso();
     const id = await tx(req.db, async () => {
       const max = await get<{ m: number | null }>(req.db, 'SELECT MAX(sort_order) AS m FROM automation_rules WHERE brand_id = ?', [brand.id]);
@@ -142,7 +166,7 @@ export function automationRoutes(): Router {
         action: input.action,
         category_ids: [],
         platforms: input.platforms,
-        conditions: { categories: input.categories, platforms: input.platforms, minConfidence: input.minConfidence },
+        conditions: { matchType: input.matchType, categories: input.categories, keywords: input.keywords, replyTemplate: input.replyTemplate, platforms: input.platforms, minConfidence: input.minConfidence },
         is_active: input.isActive,
         sort_order: (max?.m ?? 0) + 10,
         created_by_id: user.id,
@@ -172,9 +196,9 @@ export function automationRoutes(): Router {
     if (!current || !scope.brandIds.includes(current.brandId)) throw notFound('找不到自動化規則');
     const input = patchSchema.parse(req.body);
     const next = { ...current, ...Object.fromEntries(Object.entries(input).filter(([, v]) => v !== undefined)) } as AutomationRule;
-    validateRule(next.action, next.categories, next.platforms);
+    await validateRule(req.db, current.brandId, next);
     const diff = diffFields(
-      { name: current.name, description: current.description, action: current.action, categories: current.categories, platforms: current.platforms, minConfidence: current.minConfidence, isActive: current.isActive },
+      { name: current.name, description: current.description, action: current.action, matchType: current.matchType, categories: current.categories, keywords: current.keywords, replyTemplate: current.replyTemplate, platforms: current.platforms, minConfidence: current.minConfidence, isActive: current.isActive },
       input,
     );
     if (diff) {
@@ -184,7 +208,7 @@ export function automationRoutes(): Router {
           description: next.description,
           action: next.action,
           platforms: next.platforms,
-          conditions: { categories: next.categories, platforms: next.platforms, minConfidence: next.minConfidence },
+          conditions: { matchType: next.matchType, categories: next.categories, keywords: next.keywords, replyTemplate: next.replyTemplate, platforms: next.platforms, minConfidence: next.minConfidence },
           is_active: next.isActive,
           updated_by_id: user.id,
           updated_at: nowIso(),

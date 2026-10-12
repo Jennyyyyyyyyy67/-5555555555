@@ -1,5 +1,6 @@
 import type { PlatformAdapter } from './types';
 import { createMockAdapter } from './mock/createMockAdapter';
+import { createInstagramAdapter } from './instagram';
 import type { PlatformMeta } from '../../shared/types';
 
 // 各平台的帳號類型與可用動作。能力設定參考各平台公開 API 的實際限制：
@@ -25,7 +26,7 @@ const facebook = createMockAdapter({
   ],
 });
 
-const instagram = createMockAdapter({
+const instagram = createInstagramAdapter(createMockAdapter({
   platform: 'instagram',
   label: 'Instagram',
   accountTypes: [
@@ -36,7 +37,7 @@ const instagram = createMockAdapter({
       capabilities: { reply: true, like: false, hide: true, delete: true, block: false },
     },
   ],
-});
+}));
 
 const youtube = createMockAdapter({
   platform: 'youtube',

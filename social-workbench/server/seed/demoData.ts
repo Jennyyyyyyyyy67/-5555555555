@@ -31,6 +31,11 @@ import { DEMO_BRANDS, DEMO_PASSWORD, DEMO_USERS } from './demo';
 
 const DEFAULT_CATEGORY_KEYS = new Set(DEFAULT_CATEGORIES.map((c) => c.key));
 import { BRAND_SCRIPTS, BRAND_SETTINGS, LAST_LOGIN_AGO } from './data';
+import { KNOWLEDGE } from './data/knowledge';
+import { rankKnowledge, type KnowledgeRow } from '../ai/knowledge';
+import { mockProvider } from '../ai/mockProvider';
+import { forceHumanReasons } from '../ai/safety';
+import type { Analysis } from '../ai/types';
 import type { AccountSeed, BrandScript, CommentSeed, Flow, PostSeed, UserKey } from './data/types';
 import type { SeedSummary } from '../../shared/types';
 
@@ -190,6 +195,8 @@ class DemoSeeder {
   private readonly categories = new Map<string, CategoryInfo>();
   private readonly settings = new Map<string, SettingInfo>();
   private readonly audits: PendingAudit[] = [];
+  /** 各品牌可用的知識（建立示範 AI 判斷紀錄用） */
+  private readonly knowledgeRows = new Map<number, KnowledgeRow[]>();
 
   constructor(
     private readonly db: DB,
@@ -203,6 +210,7 @@ class DemoSeeder {
     await this.createUsers();
     await this.applyBrandSettings();
     await this.createAutomationRules();
+    await this.createKnowledge();
     await this.loadCategories();
 
     const drafts: Draft[] = [];
@@ -393,6 +401,60 @@ class DemoSeeder {
         created_at: at,
         updated_at: at,
       });
+    }
+  }
+
+  /** 示範知識庫：已審核的品牌知識、一則已過期的活動、小編提出待審核的知識 */
+  private async createKnowledge(): Promise<void> {
+    const admin = this.adminUser();
+    const lead = this.users.get('lead');
+    const DAY = DAY_MIN;
+    for (const brand of this.brands) {
+      let i = 0;
+      for (const k of KNOWLEDGE[brand.code] ?? []) {
+        i++;
+        const author = k.by ? this.userFor(k.by, brand) : admin;
+        const approver = brand.code === 'MORI' || !lead ? admin : lead;
+        const createdAt = this.iso(this.ago((60 - i) * DAY));
+        const pending = k.status === 'pending';
+        const at = pending ? this.iso(this.ago(2 * 60 + i * 10)) : createdAt;
+        const day = (offset: number) => new Date(this.nowMs + offset * DAY * MIN + 8 * 3600_000).toISOString().slice(0, 10);
+        const validTo = k.validDays !== undefined ? day(k.validDays) : null;
+        const validFrom = k.startsInDays !== undefined ? day(k.startsInDays) : k.validDays !== undefined && k.validDays < 0 ? day(k.validDays - 62) : null;
+        const id = await insert(this.db, 'knowledge_items', {
+          brand_id: brand.id,
+          category: k.category,
+          title: k.title,
+          content: k.content,
+          keywords: k.keywords,
+          is_active: !k.inactive,
+          valid_from: validFrom,
+          valid_to: validTo,
+          review_status: pending ? 'pending' : 'approved',
+          source: 'manual',
+          version: 1,
+          created_by_id: author.id,
+          updated_by_id: author.id,
+          approved_by_id: pending ? null : approver.id,
+          created_at: at,
+          updated_at: at,
+        });
+        if (!pending && !k.inactive) {
+          const list = this.knowledgeRows.get(brand.id) ?? [];
+          list.push({ id, category: k.category, title: k.title, content: k.content, keywords: JSON.stringify(k.keywords), valid_from: validFrom, valid_to: validTo });
+          this.knowledgeRows.set(brand.id, list);
+        }
+        await insert(this.db, 'knowledge_revisions', {
+          knowledge_id: id,
+          brand_id: brand.id,
+          version: 1,
+          change_type: pending ? 'propose' : 'create',
+          snapshot: { title: k.title, content: k.content, keywords: k.keywords, category: k.category, validFrom, validTo },
+          note: '',
+          changed_by_id: author.id,
+          created_at: at,
+        });
+      }
     }
   }
 
@@ -730,6 +792,20 @@ class DemoSeeder {
   private async insertComment(d: Draft): Promise<void> {
     const flags = d.seed.risk ?? [];
     const sla = d.setting.slaMinutes;
+    // 示範的 AI 判斷紀錄：類型、優先級、風險沿用腳本設定，信心與判斷依據由模擬 AI 產生
+    const ai = await mockProvider.analyze({ body: d.seed.text, authorName: d.seed.by, rating: d.seed.stars ?? null, platform: d.post.account.seed.platform, brandCode: d.brand.code });
+    const analysis: Analysis = {
+      ...ai,
+      categoryKey: d.category.key,
+      tags: d.seed.tags ?? [],
+      riskFlags: flags as RiskFlag[],
+      riskLevel: this.riskLevel(d),
+      sentiment: this.sentiment(d),
+      priority: this.priority(d),
+      confidence: ai.categoryKey === d.category.key ? ai.confidence : Math.min(ai.confidence, 0.7),
+    };
+    const kn = rankKnowledge(this.knowledgeRows.get(d.brand.id) ?? [], { body: d.seed.text, categoryKey: d.category.key, categoryName: d.category.key }, new Date(this.nowMs));
+    const knowledgeGap = kn.needsKnowledge && kn.hits.length === 0;
     const lastEvent = Math.max(d.fetched, d.completedAt ?? 0, ...d.events.map((e) => e.at));
     d.id = await insert(this.db, 'comments', {
       brand_id: d.brand.id,
@@ -753,6 +829,7 @@ class DemoSeeder {
       risk_level: this.riskLevel(d),
       sentiment: this.sentiment(d),
       handling_mode: d.setting.handlingMode,
+      knowledge_gap: knowledgeGap,
       needs_human: flags.some((f) => FORCE_HUMAN_FLAGS.includes(f)),
       assignee_id: d.assignee?.id ?? null,
       original_assignee_id: d.originalAssignee?.id ?? null,
@@ -770,6 +847,31 @@ class DemoSeeder {
       is_liked: d.isLiked,
       created_at: this.iso(d.fetched),
       updated_at: this.iso(lastEvent),
+    });
+    const forceHuman = forceHumanReasons(analysis, { needsKnowledge: kn.needsKnowledge, hasHits: kn.hits.length > 0 });
+    await insert(this.db, 'ai_analyses', {
+      comment_id: d.id,
+      brand_id: d.brand.id,
+      provider: mockProvider.name,
+      category_key: analysis.categoryKey,
+      category_id: d.category.id,
+      tags: analysis.tags,
+      risk_flags: analysis.riskFlags,
+      risk_level: analysis.riskLevel,
+      sentiment: analysis.sentiment,
+      priority: analysis.priority,
+      priority_reasons: analysis.reasons,
+      confidence: analysis.confidence,
+      is_ambiguous: analysis.isAmbiguous,
+      is_multi_issue: analysis.isMultiIssue,
+      knowledge_gap: knowledgeGap,
+      knowledge_hits: kn.hits.map((h) => h.id),
+      force_human_reasons: forceHuman,
+      recommended_mode: d.setting.handlingMode,
+      final_mode: d.setting.handlingMode,
+      suggested_action: 'reply',
+      suggested_action_reason: '',
+      created_at: this.iso(d.fetched),
     });
   }
 

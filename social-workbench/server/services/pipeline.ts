@@ -9,12 +9,12 @@ import { mockProvider } from '../ai/mockProvider';
 import type { AIProvider, Analysis, BrandStyle } from '../ai/types';
 import { forceHumanReasons, MIN_AUTO_CONFIDENCE, type ForceHumanReason } from '../ai/safety';
 import { badRequest, HttpError, notFound } from '../lib/errors';
+import { needsKnowledge, searchKnowledge } from '../ai/knowledge';
+import type { KnowledgeSearchResult } from '../../shared/types';
 
 /** 目前使用的 AI；階段 3 起可依設定切換 */
 export const ai: AIProvider = mockProvider;
 
-/** 需要事實知識才能回答的類型（沒有知識庫時標記「知識不足」） */
-const KNOWLEDGE_CATEGORIES = ['product_inquiry', 'price_inquiry', 'purchase_inquiry', 'usage', 'after_sales'];
 
 export interface RuleConditions {
   /** 適用的留言類型 key */
@@ -48,6 +48,8 @@ export interface PipelineResult {
   analysis: Analysis;
   categoryName: string;
   forceHuman: ForceHumanReason[];
+  /** 知識庫檢索結果 */
+  knowledge: KnowledgeSearchResult;
   /** 符合的規則（可能因安全檢查而沒有執行） */
   matchedRule: RuleMatch | null;
   decision: Decision;
@@ -121,7 +123,8 @@ export async function decide(
 ): Promise<Omit<PipelineResult, 'commentId' | 'slaMinutes' | 'slaDueAt'>> {
   const analysis = await ai.analyze({ body: input.body, authorName: input.authorName, rating: input.rating, platform: input.platform, brandCode: input.brandCode });
   const cat = await get<{ name: string }>(db, 'SELECT name FROM comment_categories WHERE key = ?', [analysis.categoryKey]);
-  const forceHuman = forceHumanReasons(analysis);
+  const knowledge = await searchKnowledge(db, { brandId: input.brandId, body: input.body, categoryKey: analysis.categoryKey, categoryName: cat?.name ?? analysis.categoryKey });
+  const forceHuman = forceHumanReasons(analysis, { needsKnowledge: needsKnowledge(analysis.categoryKey), hasHits: knowledge.hits.length > 0 });
   const matchedRule = await findRule(db, input.brandId, input.platform, analysis);
   const caps = getAccountType(input.platform, input.accountType)?.capabilities;
 
@@ -158,7 +161,7 @@ export async function decide(
       explanation = `符合規則「${matchedRule.ruleName}」，已自動按讚。`;
     }
   }
-  return { analysis, categoryName: cat?.name ?? analysis.categoryKey, forceHuman, matchedRule, decision, replyBody, explanation };
+  return { analysis, categoryName: cat?.name ?? analysis.categoryKey, forceHuman, knowledge, matchedRule, decision, replyBody, explanation };
 }
 
 async function loadContext(db: DB, accountId: number): Promise<Context> {
@@ -206,7 +209,7 @@ export async function processIncoming(
   const slaMinutes = setting && setting.sla_enabled === 1 && setting.sla_minutes ? setting.sla_minutes : null;
   const slaDueAt = slaMinutes ? addMinutes(c.occurredAt, slaMinutes) : null;
   const critical = result.forceHuman.some((r) => ['sensitive', 'complaint', 'refund', 'promise', 'risk'].includes(r.code));
-  const knowledgeGap = KNOWLEDGE_CATEGORIES.includes(a.categoryKey);
+  const knowledgeGap = result.knowledge.needsKnowledge && result.knowledge.hits.length === 0;
 
   let threadRootId: number | null = null;
   let parent: { id: number; thread_root_id: number | null; status: string; brand_id: number } | undefined;
@@ -262,6 +265,7 @@ export async function processIncoming(
       is_ambiguous: a.isAmbiguous,
       is_multi_issue: a.isMultiIssue,
       knowledge_gap: knowledgeGap,
+      knowledge_hits: result.knowledge.hits.map((h) => h.id),
       force_human_reasons: result.forceHuman,
       recommended_mode: result.decision === 'auto_replied' ? 'ai_auto' : setting?.handling_mode ?? 'ai_suggest',
       final_mode: result.decision === 'auto_replied' ? 'ai_auto' : critical ? 'manual' : setting?.handling_mode ?? 'ai_suggest',

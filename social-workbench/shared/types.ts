@@ -5,6 +5,7 @@ import type {
   CommentStatus,
   ContentType,
   HandlingMode,
+  KnowledgeCategory,
   Priority,
   RiskFlag,
   RiskLevel,
@@ -466,6 +467,8 @@ export interface CommentDetail {
     /** 可強制接手別人的處理中鎖定 */
     canOverrideLock: boolean;
   };
+  /** 最新一次 AI 判斷的細節 */
+  ai: AiSummary | null;
   serverTime: string;
 }
 
@@ -473,6 +476,10 @@ export interface ReplyInput {
   body: string;
   /** 回覆後的狀態：等待對方（還需要對方回應）或已完成 */
   statusAfter: 'waiting' | 'done';
+  /** 採用（或修改自）哪一則 AI 建議 */
+  suggestionId?: number | null;
+  /** 已看過送出前檢查的提醒，仍要送出 */
+  confirmWarnings?: boolean;
 }
 
 export interface NotificationItem {
@@ -633,4 +640,181 @@ export interface AutomationRecentItem {
   authorName: string | null;
   replyBody: string | null;
   forceHuman: string[];
+}
+
+// ======================================================================
+// 階段 3：AI 判斷、品牌風格、知識庫、回覆建議
+// ======================================================================
+export interface AiSummary {
+  provider: string;
+  analyzedAt: string;
+  confidence: number | null;
+  reasons: string[];
+  forceHuman: Array<{ code: string; label: string }>;
+  needsKnowledge: boolean;
+  knowledgeGap: boolean;
+  /** 人工修正過分類或優先級 */
+  correctedByName: string | null;
+  /** AI 原本判斷的類型（被修正時顯示） */
+  originalCategoryName: string | null;
+}
+
+export interface ClassifyInput {
+  categoryKey?: string;
+  priority?: Priority;
+  reason?: string;
+}
+
+export type KnowledgeStatus = 'approved' | 'pending' | 'rejected';
+
+export interface KnowledgeItem {
+  id: number;
+  brandId: number;
+  brandName: string;
+  category: KnowledgeCategory;
+  title: string;
+  content: string;
+  keywords: string[];
+  isActive: boolean;
+  validFrom: string | null;
+  validTo: string | null;
+  reviewStatus: KnowledgeStatus;
+  source: 'manual' | 'from_reply' | 'import';
+  sourceCommentId: number | null;
+  version: number;
+  createdByName: string | null;
+  updatedByName: string | null;
+  approvedByName: string | null;
+  createdAt: string;
+  updatedAt: string;
+  /** 已超過有效期限 */
+  isExpired: boolean;
+  /** 尚未開始生效 */
+  isUpcoming: boolean;
+}
+
+export interface KnowledgeInput {
+  brandId: number;
+  category: KnowledgeCategory;
+  title: string;
+  content: string;
+  keywords: string[];
+  validFrom?: string | null;
+  validTo?: string | null;
+  sourceCommentId?: number | null;
+}
+export type KnowledgePatch = Partial<Omit<KnowledgeInput, 'brandId' | 'sourceCommentId'>> & { note?: string };
+
+export interface KnowledgeRevision {
+  id: number;
+  version: number;
+  changeType: string;
+  snapshot: { title: string; content: string; keywords: string[]; category: string; validFrom: string | null; validTo: string | null };
+  note: string;
+  changedByName: string | null;
+  createdAt: string;
+}
+
+export interface KnowledgeListResponse {
+  items: KnowledgeItem[];
+  counts: { all: number; approved: number; pending: number; rejected: number; expired: number; inactive: number };
+}
+
+export interface KnowledgeDetailResponse {
+  item: KnowledgeItem;
+  revisions: KnowledgeRevision[];
+}
+
+export interface KnowledgeHit {
+  id: number;
+  title: string;
+  category: KnowledgeCategory;
+  content: string;
+  /** 留言中命中的關鍵字 */
+  matched: string[];
+}
+
+export interface KnowledgeSearchResult {
+  categoryKey: string;
+  categoryName: string;
+  needsKnowledge: boolean;
+  hits: KnowledgeHit[];
+  /** 符合但已過期（或尚未生效）而沒有使用的知識 */
+  skipped: Array<{ id: number; title: string; reason: string }>;
+}
+
+export interface StyleVariant {
+  key: string;
+  label: string;
+  enabled: boolean;
+}
+
+export interface BrandStyleView {
+  brandId: number;
+  personality: string;
+  speakingStyle: string;
+  tone: string;
+  formality: number;
+  humor: number;
+  replyLength: 'short' | 'medium' | 'long';
+  emojiUsage: 'none' | 'light' | 'frequent';
+  addressing: string;
+  commonPhrases: string[];
+  bannedWords: string[];
+  unsuitableTones: string[];
+  forbiddenPromises: string[];
+  signature: string;
+  variants: StyleVariant[];
+  updatedAt: string;
+  updatedByName: string | null;
+}
+export type BrandStyleInput = Omit<BrandStyleView, 'brandId' | 'updatedAt' | 'updatedByName'>;
+
+export interface ReplyWarning {
+  /** block：必須修改才能送出；confirm：確認後可送出 */
+  level: 'block' | 'confirm';
+  code: string;
+  message: string;
+}
+
+export interface SuggestionVariant {
+  /** 儲存後的建議 id（預覽時為 null） */
+  id: number | null;
+  key: string;
+  label: string;
+  body: string;
+  knowledgeIds: number[];
+  warnings: ReplyWarning[];
+}
+
+export interface SuggestionSet {
+  round: number;
+  createdAt: string;
+  requestedByName: string | null;
+  categoryKey: string;
+  categoryName: string;
+  needsKnowledge: boolean;
+  knowledgeGap: boolean;
+  hits: KnowledgeHit[];
+  skipped: KnowledgeSearchResult['skipped'];
+  forceHuman: Array<{ code: string; label: string }>;
+  /** 品牌對這類留言的處理指引 */
+  guidance: string;
+  forbiddenPromises: string[];
+  variants: SuggestionVariant[];
+  /** 給小編的提醒（例如：知識不足、已略過活潑版） */
+  notes: string[];
+}
+
+export interface SuggestionsResponse {
+  latest: SuggestionSet | null;
+}
+
+export interface ReplyCheckResult {
+  warnings: ReplyWarning[];
+}
+
+export interface StylePreviewInput {
+  body: string;
+  style: BrandStyleInput;
 }

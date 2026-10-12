@@ -20,6 +20,7 @@ import {
 import { getAccountType, getAdapter } from '../adapters/registry';
 import { badRequest, forbidden, HttpError } from '../lib/errors';
 import { nowIso } from '../lib/clock';
+import { needsKnowledge } from '../ai/knowledge';
 import { can } from '../../shared/permissions';
 import {
   COMMENT_STATUSES,
@@ -33,6 +34,7 @@ import {
 } from '../../shared/constants';
 import {
   INBOX_TABS,
+  type AiSummary,
   type AuditLogEntry,
   type CommentDetail,
   type InboxItem,
@@ -311,12 +313,40 @@ async function buildDetail(db: DB, user: AuthUser, scope: BrandScope, id: number
     history,
     lock,
     directory: await brandDirectory(db, item.brandId),
+    ai: await loadAiSummary(db, id, item.categoryKey),
     permissions: {
       canHandle: !lock || lock.isMine,
       canReassign: can(user.role, 'reassignComments'),
       canOverrideLock: can(user.role, 'overrideLock'),
     },
     serverTime: now,
+  };
+}
+
+/** 最新一次 AI 判斷（含是否被人工修正） */
+async function loadAiSummary(db: DB, commentId: number, currentCategoryKey: string | null): Promise<AiSummary | null> {
+  const a = await get<{ provider: string; created_at: string; confidence: number | null; priority_reasons: string; force_human_reasons: string; knowledge_gap: number; category_key: string | null; category_name: string | null }>(
+    db,
+    `SELECT a.provider, a.created_at, a.confidence, a.priority_reasons, a.force_human_reasons, a.knowledge_gap, a.category_key, cc.name AS category_name
+     FROM ai_analyses a LEFT JOIN comment_categories cc ON cc.key = a.category_key WHERE a.comment_id = ? ORDER BY a.id DESC LIMIT 1`,
+    [commentId],
+  );
+  if (!a) return null;
+  const corrected = await get<{ name: string | null }>(
+    db,
+    `SELECT u.name FROM audit_logs l LEFT JOIN users u ON u.id = l.actor_user_id WHERE l.comment_id = ? AND l.action = 'comment.reclassify' ORDER BY l.id DESC LIMIT 1`,
+    [commentId],
+  );
+  return {
+    provider: a.provider,
+    analyzedAt: a.created_at,
+    confidence: a.confidence,
+    reasons: parseJson<string[]>(a.priority_reasons, []),
+    forceHuman: parseJson<Array<{ code: string; label: string }>>(a.force_human_reasons, []),
+    needsKnowledge: needsKnowledge(currentCategoryKey ?? a.category_key ?? ''),
+    knowledgeGap: a.knowledge_gap === 1,
+    correctedByName: corrected ? (corrected.name ?? '') : null,
+    originalCategoryName: a.category_key && a.category_key !== currentCategoryKey ? a.category_name : null,
   };
 }
 

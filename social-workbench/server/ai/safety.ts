@@ -18,6 +18,7 @@ export interface ForceHumanReason {
 export const FORCE_HUMAN_RULES: ForceHumanReason[] = [
   { code: 'low_confidence', label: `AI 信心不足（低於 ${Math.round(MIN_AUTO_CONFIDENCE * 100)}%）` },
   { code: 'knowledge_gap', label: '找不到可靠知識（需要事實資訊的問題）' },
+  { code: 'needs_review', label: '這類留言的回覆需要人工確認（自動回覆只開放稱讚與一般互動）' },
   { code: 'ambiguous', label: '問題內容不明確' },
   { code: 'multi_issue', label: '同時包含多種複雜問題' },
   { code: 'sensitive', label: '涉及敏感議題或安全疑慮' },
@@ -31,12 +32,14 @@ const label = (code: string) => FORCE_HUMAN_RULES.find((r) => r.code === code)!.
 
 /**
  * 回傳必須轉人工的原因；空陣列代表可以自動回覆。
- * needsKnowledge：此類型的回覆是否需要事實知識（價格、規格…）。第一版沒有知識庫，因此一律視為知識不足。
+ * knowledge.needsKnowledge：此類型的回覆需要事實知識（價格、規格…）；hasHits：知識庫有找到可引用的內容。
  */
-export function forceHumanReasons(a: Analysis): ForceHumanReason[] {
+export function forceHumanReasons(a: Analysis, knowledge: { needsKnowledge: boolean; hasHits: boolean } = { needsKnowledge: true, hasHits: false }): ForceHumanReason[] {
   const out = new Set<string>();
   if (a.confidence < MIN_AUTO_CONFIDENCE) out.add('low_confidence');
-  if (!(AUTO_REPLY_ALLOWED_CATEGORIES as readonly string[]).includes(a.categoryKey)) out.add('knowledge_gap');
+  if (!(AUTO_REPLY_ALLOWED_CATEGORIES as readonly string[]).includes(a.categoryKey)) {
+    out.add(knowledge.needsKnowledge && !knowledge.hasHits ? 'knowledge_gap' : 'needs_review');
+  }
   if (a.isAmbiguous) out.add('ambiguous');
   if (a.isMultiIssue) out.add('multi_issue');
   if (a.riskFlags.includes('sensitive') || a.riskFlags.includes('safety') || a.riskFlags.includes('privacy')) out.add('sensitive');

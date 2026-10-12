@@ -1,246 +1,335 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { useBrandScope } from '../../brand/BrandScope';
-import { api, errorMessage } from '../../lib/api';
-import { useQuery } from '../../lib/useQuery';
 import { useMeta } from '../../lib/meta';
-import { formatDateTime, formatNumber, formatShortDateTime } from '../../lib/format';
-import { useToast } from '../../components/Toast';
-import {
-  Badge,
-  Button,
-  EmptyState,
-  ErrorMessage,
-  Loading,
-  PageHeader,
-  PRIORITY_TONE,
-  Select,
-  STATUS_TONE,
-  TextInput,
-} from '../../components/ui';
-import { BrandTag, IconClock, PlatformIcon } from '../../components/icons';
-import {
-  COMMENT_STATUSES,
-  CONTENT_TYPE_LABELS,
-  PRIORITY_LABELS,
-  SLA_ACTIVE_STATUSES,
-  STATUS_LABELS,
-  type CommentStatus,
-} from '../../../../shared/constants';
-import type { CommentPreview, Paginated } from '../../../../shared/types';
+import { api } from '../../lib/api';
+import { formatShortDateTime, formatDateTime } from '../../lib/format';
+import { Avatar, Badge, Button, EmptyState, ErrorMessage, Loading, PRIORITY_TONE, STATUS_TONE, Select, TextInput } from '../../components/ui';
+import { IconRefresh, IconSearch, IconShield, PlatformIcon } from '../../components/icons';
+import { CONTENT_TYPE_LABELS, PRIORITY_LABELS, STATUS_LABELS, COMMENT_STATUSES, PRIORITIES } from '../../../../shared/constants';
+import { INBOX_TABS, INBOX_TAB_LABELS, type InboxItem, type InboxResponse, type InboxTab } from '../../../../shared/types';
+import { SlaChip, slaInfo, syncServerTime, useNow } from './sla';
+import CommentDetailPane from './CommentDetail';
 import './inbox.css';
 
-const PAGE_SIZE = 50;
-const SEARCH_DEBOUNCE_MS = 300;
+const PAGE = 50;
+const FILTER_KEYS = ['q', 'platform', 'accountId', 'category', 'priority', 'status', 'assignee', 'sla', 'adOnly', 'auto', 'postId'] as const;
 
+export default function InboxPage() {
+  const { id } = useParams();
+  const selectedId = id ? Number(id) : null;
+  const navigate = useNavigate();
+  const [params, setParams] = useSearchParams();
+  const { brandParam } = useBrandScope();
+  const { meta } = useMeta();
+  const now = useNow(15_000);
 
-function Stars({ rating }: { rating: number }) {
-  const r = Math.max(0, Math.min(5, Math.round(rating)));
+  const tab = (params.get('tab') as InboxTab) || 'todo';
+  const filters = useMemo(() => Object.fromEntries(FILTER_KEYS.map((k) => [k, params.get(k) ?? ''])) as Record<(typeof FILTER_KEYS)[number], string>, [params]);
+  const [qInput, setQInput] = useState(filters.q);
+  const [showMore, setShowMore] = useState(() => !!(filters.status || filters.accountId || filters.adOnly || filters.auto || filters.postId));
+
+  const [data, setData] = useState<InboxResponse | null>(null);
+  const [extra, setExtra] = useState<InboxItem[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<unknown>(null);
+  const seq = useRef(0);
+
+  const query = useMemo(() => ({ brand: brandParam, tab, ...filters, limit: PAGE }), [brandParam, tab, filters]);
+
+  const load = useCallback(
+    async (opts: { silent?: boolean } = {}) => {
+      const s = ++seq.current;
+      if (!opts.silent) setLoading(true);
+      try {
+        const res = await api.get<InboxResponse>('/comments', query);
+        if (s !== seq.current) return;
+        syncServerTime(res.serverTime);
+        setData(res);
+        setExtra([]);
+        setError(null);
+      } catch (err) {
+        if (s === seq.current) setError(err);
+      } finally {
+        if (s === seq.current) setLoading(false);
+      }
+    },
+    [query],
+  );
+
+  useEffect(() => {
+    void load();
+  }, [load]);
+  // 每 30 秒自動更新（新留言、別人的處理狀態）
+  useEffect(() => {
+    const t = setInterval(() => void load({ silent: true }), 30_000);
+    return () => clearInterval(t);
+  }, [load]);
+  // 搜尋輸入防抖
+  useEffect(() => {
+    const t = setTimeout(() => {
+      if (qInput !== filters.q) setFilter('q', qInput);
+    }, 350);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [qInput]);
+
+  const setFilter = (key: string, value: string) => {
+    const next = new URLSearchParams(params);
+    if (value) next.set(key, value);
+    else next.delete(key);
+    setParams(next, { replace: true });
+  };
+  const setTab = (t: InboxTab) => {
+    const next = new URLSearchParams(params);
+    next.set('tab', t);
+    setParams(next, { replace: true });
+  };
+  const clearFilters = () => {
+    const next = new URLSearchParams();
+    next.set('tab', tab);
+    setParams(next, { replace: true });
+    setQInput('');
+  };
+  const activeFilterCount = FILTER_KEYS.filter((k) => filters[k]).length;
+
+  const loadMore = async () => {
+    if (!data) return;
+    const res = await api.get<InboxResponse>('/comments', { ...query, offset: data.items.length + extra.length });
+    setExtra((e) => [...e, ...res.items]);
+  };
+
+  const items = data ? [...data.items, ...extra] : [];
+  const open = (cid: number) => navigate({ pathname: `/inbox/${cid}`, search: params.toString() });
+  const accounts = useMemo(() => {
+    const m = new Map<number, { id: number; name: string; platform: string }>();
+    for (const i of items) m.set(i.accountId, { id: i.accountId, name: i.accountName, platform: i.platform });
+    return [...m.values()];
+  }, [items]);
+
   return (
-    <span className="ib-stars" title={`${r} 星評價`}>
-      <span aria-hidden>{'★'.repeat(r) + '☆'.repeat(5 - r)}</span>
-      <span className="sr-only">{r} 星評價</span>
-    </span>
+    <div className={`inbox ${selectedId ? 'has-detail' : ''}`}>
+      <section className="inbox-list" aria-label="留言列表">
+        <div className="inbox-head">
+          <div className="row" style={{ justifyContent: 'space-between' }}>
+            <h1>收件匣</h1>
+            <Button size="sm" variant="ghost" icon={<IconRefresh />} onClick={() => void load()} aria-label="重新整理">
+              更新
+            </Button>
+          </div>
+          {data && (data.overdue > 0 || data.nearDue > 0) && (
+            <div className="inbox-alerts">
+              {data.overdue > 0 && (
+                <button className={`alert-pill overdue ${filters.sla === 'overdue' ? 'on' : ''}`} onClick={() => setFilter('sla', filters.sla === 'overdue' ? '' : 'overdue')}>
+                  ⚠ 已超時 {data.overdue} 則
+                </button>
+              )}
+              {data.nearDue > 0 && (
+                <button className={`alert-pill near ${filters.sla === 'near' ? 'on' : ''}`} onClick={() => setFilter('sla', filters.sla === 'near' ? '' : 'near')}>
+                  ⏱ 即將超時 {data.nearDue} 則
+                </button>
+              )}
+            </div>
+          )}
+          <div className="inbox-tabs" role="tablist">
+            {INBOX_TABS.map((t) => (
+              <button key={t} role="tab" aria-selected={tab === t} className={`inbox-tab ${tab === t ? 'active' : ''}`} onClick={() => setTab(t)}>
+                {INBOX_TAB_LABELS[t]}
+                {data && t !== 'all' && t !== 'closed' && <span className="count">{data.tabCounts[t]}</span>}
+              </button>
+            ))}
+          </div>
+          <div className="inbox-filters">
+            <div className="search">
+              <IconSearch size={16} />
+              <TextInput value={qInput} onChange={(e) => setQInput(e.target.value)} placeholder="搜尋留言內容或留言者" aria-label="搜尋" />
+            </div>
+            <Select value={filters.platform} onChange={(e) => setFilter('platform', e.target.value)} aria-label="平台">
+              <option value="">全部平台</option>
+              {meta?.platforms.map((p) => (
+                <option key={p.key} value={p.key}>
+                  {p.label}
+                </option>
+              ))}
+            </Select>
+            <Select value={filters.category} onChange={(e) => setFilter('category', e.target.value)} aria-label="留言類型">
+              <option value="">全部類型</option>
+              {meta?.categories
+                .filter((c) => c.isActive)
+                .map((c) => (
+                  <option key={c.key} value={c.key}>
+                    {c.name}
+                  </option>
+                ))}
+            </Select>
+            <Select value={filters.priority} onChange={(e) => setFilter('priority', e.target.value)} aria-label="優先級">
+              <option value="">全部優先級</option>
+              {PRIORITIES.map((p) => (
+                <option key={p} value={p}>
+                  優先級：{PRIORITY_LABELS[p]}
+                </option>
+              ))}
+            </Select>
+            <Select value={filters.assignee} onChange={(e) => setFilter('assignee', e.target.value)} aria-label="負責人">
+              <option value="">全部負責人</option>
+              <option value="me">我負責的</option>
+              <option value="none">未指派</option>
+            </Select>
+            <Button size="sm" variant="ghost" onClick={() => setShowMore((v) => !v)} aria-expanded={showMore}>
+              {showMore ? '收起篩選' : '更多篩選'}
+            </Button>
+            {activeFilterCount > 0 && (
+              <Button size="sm" variant="ghost" onClick={clearFilters}>
+                清除篩選（{activeFilterCount}）
+              </Button>
+            )}
+          </div>
+          {showMore && (
+            <div className="inbox-filters more">
+              <Select value={filters.status} onChange={(e) => setFilter('status', e.target.value)} aria-label="狀態">
+                <option value="">全部狀態</option>
+                {COMMENT_STATUSES.map((s) => (
+                  <option key={s} value={s}>
+                    {STATUS_LABELS[s]}
+                  </option>
+                ))}
+              </Select>
+              <Select value={filters.sla} onChange={(e) => setFilter('sla', e.target.value)} aria-label="時效">
+                <option value="">全部時效</option>
+                <option value="overdue">已超時</option>
+                <option value="near">即將超時</option>
+              </Select>
+              <Select value={filters.accountId} onChange={(e) => setFilter('accountId', e.target.value)} aria-label="社群帳號">
+                <option value="">全部帳號</option>
+                {accounts.map((a) => (
+                  <option key={a.id} value={a.id}>
+                    {a.name}
+                  </option>
+                ))}
+              </Select>
+              <Select value={filters.auto} onChange={(e) => setFilter('auto', e.target.value)} aria-label="AI 自動處理">
+                <option value="">AI 自動處理：不限</option>
+                <option value="1">只看 AI 自動處理</option>
+                <option value="0">排除 AI 自動處理</option>
+              </Select>
+              <label className="checkbox">
+                <input type="checkbox" checked={filters.adOnly === '1'} onChange={(e) => setFilter('adOnly', e.target.checked ? '1' : '')} />
+                只看廣告留言
+              </label>
+              {filters.postId && (
+                <Badge tone="blue">
+                  只看單一貼文
+                  <button className="link-btn" onClick={() => setFilter('postId', '')} aria-label="取消貼文篩選">
+                    ✕
+                  </button>
+                </Badge>
+              )}
+            </div>
+          )}
+        </div>
+
+        <div className="inbox-items">
+          {error ? (
+            <div style={{ padding: 16 }}>
+              <ErrorMessage error={error} onRetry={() => void load()} />
+            </div>
+          ) : loading && !data ? (
+            <Loading />
+          ) : items.length === 0 ? (
+            <EmptyState
+              title={tab === 'todo' && activeFilterCount === 0 ? '目前沒有待處理的留言 🎉' : '這個條件下沒有留言'}
+              description={activeFilterCount ? '試試清除篩選條件。' : undefined}
+            />
+          ) : (
+            <ul>
+              {items.map((c) => (
+                <InboxRow key={c.id} c={c} now={now} selected={c.id === selectedId} onOpen={() => open(c.id)} />
+              ))}
+            </ul>
+          )}
+          {data && items.length < data.total && (
+            <div className="load-more">
+              <Button size="sm" onClick={() => void loadMore()}>
+                載入更多（還有 {data.total - items.length} 則）
+              </Button>
+            </div>
+          )}
+        </div>
+      </section>
+
+      <section className="inbox-detail" aria-label="留言詳情">
+        {selectedId ? (
+          <CommentDetailPane
+            key={selectedId}
+            id={selectedId}
+            onClose={() => navigate({ pathname: '/inbox', search: params.toString() })}
+            onChanged={() => void load({ silent: true })}
+            onFilterPost={(postId) => {
+              const next = new URLSearchParams(params);
+              next.set('postId', String(postId));
+              next.set('tab', 'all');
+              setShowMore(true);
+              navigate({ pathname: '/inbox', search: next.toString() });
+            }}
+          />
+        ) : (
+          <EmptyState title="選擇一則留言開始處理" description="左側依急迫程度排序：已超時 → 即將超時 → 優先級高 → 剩餘時間少。" />
+        )}
+      </section>
+    </div>
   );
 }
 
-function CommentRow({ c }: { c: CommentPreview }) {
-  const isAd = c.isAd || c.contentType === 'ad';
-  const showSla = c.slaDueAt !== null && c.firstResponseAt === null && SLA_ACTIVE_STATUSES.includes(c.status);
+function InboxRow({ c, now, selected, onOpen }: { c: InboxItem; now: number; selected: boolean; onOpen: () => void }) {
+  const s = slaInfo(c, now);
   return (
-    <li className="inbox-row">
-      <div className="ib-meta">
-        <time className="ib-time" dateTime={c.occurredAt} title={formatDateTime(c.occurredAt)}>
-          {formatShortDateTime(c.occurredAt)}
-        </time>
-        <BrandTag name={c.brandName} color={c.brandColor} />
-      </div>
-
-      <div className="ib-source">
-        <span className="ib-account">
-          <PlatformIcon platform={c.platform} size={18} />
-          <span className="truncate">{c.accountName}</span>
-        </span>
-        <span className="ib-post">
-          <span className="truncate muted" title={c.postTitle}>
-            {c.postTitle || '（無標題）'}
+    <li>
+      <button className={`inbox-row urg-${s.state} ${selected ? 'selected' : ''}`} onClick={onOpen} aria-current={selected || undefined}>
+        <div className="r-top">
+          <span className="r-brand" title={c.brandName}>
+            <span className="brand-dot" style={{ background: c.brandColor }} aria-hidden />
           </span>
-          {c.contentType !== 'ad' && <Badge>{CONTENT_TYPE_LABELS[c.contentType] ?? c.contentType}</Badge>}
-          {isAd && <Badge tone="orange">廣告</Badge>}
-        </span>
-      </div>
-
-      <div className="ib-comment">
-        <div className="ib-author">
+          <PlatformIcon platform={c.platform} size={16} />
           <strong className="truncate">{c.authorName}</strong>
-          {c.rating !== null && <Stars rating={c.rating} />}
+          {c.rating !== null && <span className="stars" aria-label={`${c.rating} 星`}>{'★'.repeat(c.rating)}</span>}
+          <span className="muted small nowrap" title={formatDateTime(c.occurredAt)}>
+            {formatShortDateTime(c.occurredAt)}
+          </span>
+          <span className="spacer" />
+          <SlaChip c={c} now={now} size="sm" />
         </div>
-        <p className="ib-body" title={c.body}>
-          {c.body}
-        </p>
-      </div>
-
-      <div className="ib-cat">
-        {c.categoryName ? <span className="ib-cat-name">{c.categoryName}</span> : <span className="muted">未分類</span>}
-        {c.priority && (
-          <Badge tone={PRIORITY_TONE[c.priority]} title={`優先順序：${PRIORITY_LABELS[c.priority]}`}>
-            <span className="sr-only">優先順序</span>
-            {PRIORITY_LABELS[c.priority]}
-          </Badge>
-        )}
-      </div>
-
-      <div className="ib-state">
-        <div className="ib-status">
-          <Badge tone={STATUS_TONE[c.status]}>{STATUS_LABELS[c.status]}</Badge>
-          {c.isAutoHandled && (
-            <Badge tone="purple" title="由自動化規則處理">
-              AI 自動處理
+        <p className="r-body">{c.visibility === 'deleted' ? <em className="muted">（留言已刪除）</em> : c.body}</p>
+        <div className="r-meta">
+          {c.categoryName && <Badge>{c.categoryName}</Badge>}
+          {c.priority === 'high' && <Badge tone={PRIORITY_TONE.high}>優先級高</Badge>}
+          {c.needsHuman && (
+            <Badge tone="orange" title="涉及客訴、退款、敏感議題等，必須由人工處理">
+              <IconShield size={12} /> 需人工
             </Badge>
           )}
-        </div>
-        <div className="ib-assign">
-          {c.assigneeName ? <span className="truncate">{c.assigneeName}</span> : <span className="muted">未指派</span>}
-          {showSla && (
-            <span className="ib-sla" title={`首次回覆時限：${formatDateTime(c.slaDueAt)}`}>
-              <IconClock size={13} />
-              時限 {formatShortDateTime(c.slaDueAt)}
+          {c.isAd && <Badge tone="orange">廣告</Badge>}
+          {c.isAutoHandled && <Badge tone="purple">AI 自動處理</Badge>}
+          <Badge tone={STATUS_TONE[c.status]}>{STATUS_LABELS[c.status]}</Badge>
+          {c.visibility === 'hidden' && <Badge>已隱藏</Badge>}
+          <span className="spacer" />
+          {c.lockedByName ? (
+            <span className="r-lock" title={`${c.lockedByName} 正在處理`}>
+              🔒 {c.lockedByName} 處理中
             </span>
+          ) : c.assigneeName ? (
+            <span className="r-assignee" title={`負責人：${c.assigneeName}`}>
+              <Avatar name={c.assigneeName} size="sm" />
+            </span>
+          ) : (
+            <span className="muted small">未指派</span>
           )}
         </div>
-      </div>
+        <div className="r-post muted small truncate">
+          {CONTENT_TYPE_LABELS[c.contentType]}｜{c.postTitle}
+          {c.threadCount > 0 && `・串內 ${c.threadCount + 1} 則`}
+        </div>
+      </button>
     </li>
   );
 }
 
-export default function InboxPage() {
-  const { brandParam } = useBrandScope();
-  const { meta } = useMeta();
-  const toast = useToast();
-  const [platform, setPlatform] = useState('');
-  const [status, setStatus] = useState<CommentStatus | ''>('');
-  const [search, setSearch] = useState('');
-  const [q, setQ] = useState('');
-  const [loadingMore, setLoadingMore] = useState(false);
-
-  useEffect(() => {
-    const t = setTimeout(() => setQ(search.trim()), SEARCH_DEBOUNCE_MS);
-    return () => clearTimeout(t);
-  }, [search]);
-
-  const filters = { brand: brandParam, platform, status, q };
-  const filterKey = JSON.stringify(filters);
-  const filterKeyRef = useRef(filterKey);
-  filterKeyRef.current = filterKey;
-
-  const { data, loading, error, reload, setData } = useQuery(
-    () => api.get<Paginated<CommentPreview>>('/comments/preview', { ...filters, limit: PAGE_SIZE, offset: 0 }),
-    [filterKey],
-  );
-
-  const loadMore = async () => {
-    if (!data) return;
-    const key = filterKey;
-    setLoadingMore(true);
-    try {
-      const next = await api.get<Paginated<CommentPreview>>('/comments/preview', {
-        ...filters,
-        limit: PAGE_SIZE,
-        offset: data.items.length,
-      });
-      if (filterKeyRef.current !== key) return; // 篩選條件已變更，丟棄過期的結果
-      setData((prev) => {
-        if (!prev) return next;
-        const seen = new Set(prev.items.map((c) => c.id));
-        return { ...prev, total: next.total, items: [...prev.items, ...next.items.filter((c) => !seen.has(c.id))] };
-      });
-    } catch (err) {
-      toast.error(`載入更多留言失敗：${errorMessage(err)}`);
-    } finally {
-      setLoadingMore(false);
-    }
-  };
-
-  const hasMore = !!data && data.items.length < data.total;
-
-  return (
-    <div className="inbox-page">
-      <PageHeader
-        title={
-          <span className="inbox-title">
-            收件匣
-            <Badge tone="purple">階段 1 預覽</Badge>
-          </span>
-        }
-        description="目前顯示模擬留言，可用來確認不同角色只看得到自己負責品牌的留言。完整收件匣（急迫排序、時效倒數、篩選與處理流程）將在階段 2 完成。"
-      />
-
-      <div className="toolbar inbox-toolbar">
-        <Select aria-label="平台" value={platform} onChange={(e) => setPlatform(e.target.value)}>
-          <option value="">全部平台</option>
-          {(meta?.platforms ?? []).map((p) => (
-            <option key={p.key} value={p.key}>
-              {p.label}
-            </option>
-          ))}
-        </Select>
-        <Select aria-label="處理狀態" value={status} onChange={(e) => setStatus(e.target.value as CommentStatus | '')}>
-          <option value="">全部狀態</option>
-          {COMMENT_STATUSES.map((s) => (
-            <option key={s} value={s}>
-              {STATUS_LABELS[s]}
-            </option>
-          ))}
-        </Select>
-        <TextInput
-          type="search"
-          className="inbox-search"
-          aria-label="搜尋留言"
-          placeholder="搜尋留言內容或留言者"
-          value={search}
-          maxLength={100}
-          onChange={(e) => setSearch(e.target.value)}
-        />
-        <span className="inbox-total muted" aria-live="polite">
-          {data && !error ? `共 ${formatNumber(data.total)} 則` : ''}
-        </span>
-      </div>
-
-      {error ? (
-        <ErrorMessage error={error} onRetry={reload} />
-      ) : !data ? (
-        <Loading text="載入留言中…" />
-      ) : data.items.length === 0 ? (
-        <div className="card">
-          <EmptyState title="這個條件下沒有留言" description="可以切換上方的品牌，或調整平台、狀態與搜尋條件。" />
-        </div>
-      ) : (
-        <section className="card inbox-card" aria-busy={loading || undefined}>
-          <div className={`inbox-list-wrap ${loading ? 'is-refreshing' : ''}`}>
-            <div className="inbox-head" aria-hidden>
-              <span>時間／品牌</span>
-              <span>來源</span>
-              <span>留言</span>
-              <span>類型</span>
-              <span>狀態／負責人</span>
-            </div>
-            <ul className="inbox-list">
-              {data.items.map((c) => (
-                <CommentRow key={c.id} c={c} />
-              ))}
-            </ul>
-          </div>
-          <div className="inbox-footer">
-            <span className="muted small">
-              已顯示 {formatNumber(data.items.length)}／{formatNumber(data.total)} 則
-            </span>
-            {hasMore && (
-              <Button size="sm" onClick={() => void loadMore()} loading={loadingMore}>
-                載入更多
-              </Button>
-            )}
-          </div>
-        </section>
-      )}
-    </div>
-  );
-}

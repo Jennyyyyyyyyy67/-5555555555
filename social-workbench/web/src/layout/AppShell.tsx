@@ -8,6 +8,7 @@ import { useQuery } from '../lib/useQuery';
 import type { DemoAccountsResponse } from '../../../shared/types';
 import { IconChevronDown, IconLogout, IconMenu } from '../components/icons';
 import { NAV_SECTIONS } from './nav';
+import { NotificationBell } from './NotificationBell';
 import { ROLE_LABELS } from '../../../shared/constants';
 
 export function AppShell() {
@@ -69,6 +70,7 @@ export function AppShell() {
             ))}
           </Select>
           <div className="spacer" />
+          <NotificationBell />
           <Dropdown
             trigger={({ toggle, open }) => (
               <button
@@ -132,7 +134,7 @@ export function AppShell() {
             )}
           </Dropdown>
         </header>
-        <main className="content">
+        <main className={`content ${location.pathname.startsWith('/inbox') ? 'full-bleed' : ''}`}>
           <Outlet />
         </main>
       </div>

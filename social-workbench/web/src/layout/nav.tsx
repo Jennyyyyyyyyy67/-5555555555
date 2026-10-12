@@ -1,6 +1,6 @@
 import type { ReactNode } from 'react';
 import type { Permission } from '../../../shared/permissions';
-import { IconBolt, IconBuilding, IconDatabase, IconInbox, IconLink, IconUsers } from '../components/icons';
+import { IconBolt, IconBuilding, IconClock, IconDatabase, IconInbox, IconLink, IconUsers } from '../components/icons';
 
 export interface NavItem {
   to: string;
@@ -29,6 +29,7 @@ export const NAV_SECTIONS: NavSection[] = [
     items: [
       { to: '/settings/brands', label: '品牌管理', icon: <IconBuilding />, perm: 'manageBrands' },
       { to: '/settings/accounts', label: '社群帳號', icon: <IconLink />, perm: 'viewAccounts' },
+      { to: '/settings/categories', label: '留言類型與時效', icon: <IconClock />, perm: 'viewAccounts' },
       { to: '/settings/users', label: '人員與權限', icon: <IconUsers />, perm: 'viewUsers' },
       { to: '/settings/mock', label: '模擬資料', icon: <IconDatabase />, perm: 'manageMockData' },
     ],

@@ -468,6 +468,9 @@ export async function processIncoming(
  * 透過平台 adapter 取回新留言並逐則處理（模擬器把留言放進模擬平台後呼叫；日後接真實平台也是同一個流程）。
  */
 export interface SyncSummary {
+  /** 平台回傳的留言總數（含已處理、略過的） */
+  fetched: number;
+  skippedOwn: number;
   newPosts: number;
   newComments: number;
   autoReplied: number;
@@ -514,10 +517,14 @@ export async function syncAccountDetailed(db: DB, accountId: number): Promise<Sy
   );
   const ownName = cred?.username ? `@${cred.username}`.toLowerCase() : null;
   const results: PipelineResult[] = [];
+  let skippedOwn = 0;
   for (const item of incoming) {
     if (known.has(item.externalId)) continue;
     // 自己帳號的留言（例如系統送出的回覆）不是要處理的留言
-    if (item.authorExternalId === ctx.account.external_id || (ownName && item.authorName.toLowerCase() === ownName)) continue;
+    if (item.authorExternalId === ctx.account.external_id || (ownName && item.authorName.toLowerCase() === ownName)) {
+      skippedOwn++;
+      continue;
+    }
     const post = await get<{ id: number }>(db, 'SELECT id FROM posts WHERE social_account_id = ? AND external_id = ?', [ctx.account.id, item.postExternalId]);
     if (!post) continue;
     const parent = item.parentExternalId
@@ -547,7 +554,7 @@ export async function syncAccountDetailed(db: DB, accountId: number): Promise<Sy
     known.add(item.externalId);
   }
   await run(db, 'UPDATE social_accounts SET last_synced_at = ?, status = ? WHERE id = ?', [nowIso(), 'connected', accountId]);
-  return { newPosts, newComments: results.length, autoReplied: results.filter((r) => r.decision === 'auto_replied').length, results };
+  return { fetched: incoming.length, skippedOwn, newPosts, newComments: results.length, autoReplied: results.filter((r) => r.decision === 'auto_replied').length, results };
 }
 
 export { mockFeed };

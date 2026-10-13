@@ -51,7 +51,7 @@ export function createInstagramAdapter(mock: PlatformAdapter): PlatformAdapter {
 
     async fetchPosts(a): Promise<IncomingPost[]> {
       if (!live(a)) return [];
-      const media = await ig.listMedia(a.accessToken!, 10);
+      const media = await ig.listMedia(a.accessToken!, 25);
       return media.map((m) => ({
         externalId: m.id,
         contentType: contentType(m),
@@ -65,7 +65,7 @@ export function createInstagramAdapter(mock: PlatformAdapter): PlatformAdapter {
 
     async fetchComments(a, opts) {
       if (!live(a)) return mock.fetchComments(a, opts);
-      const media = await ig.listMedia(a.accessToken!, 10);
+      const media = await ig.listMedia(a.accessToken!, 25);
       const lists = await Promise.all(media.map((m) => ig.listComments(a.accessToken!, m.id).then((cs) => ({ m, cs }))));
       const out: IncomingComment[] = [];
       for (const { m, cs } of lists) {

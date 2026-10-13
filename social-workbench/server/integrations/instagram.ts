@@ -144,11 +144,12 @@ export interface IgMedia {
   media_product_type?: string;
   permalink?: string;
   timestamp: string;
+  comments_count?: number;
 }
 
 export async function listMedia(token: string, limit = 10): Promise<IgMedia[]> {
   const r = await call<{ data: IgMedia[] }>(
-    graph('me/media', { fields: 'id,caption,media_type,media_product_type,permalink,timestamp', limit: String(limit), access_token: token }),
+    graph('me/media', { fields: 'id,caption,media_type,media_product_type,permalink,timestamp,comments_count', limit: String(limit), access_token: token }),
   );
   return r.data ?? [];
 }

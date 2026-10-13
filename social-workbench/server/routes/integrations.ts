@@ -12,6 +12,7 @@ import { badRequest, notFound } from '../lib/errors';
 import { nowIso } from '../lib/clock';
 import { config } from '../config';
 import * as ig from '../integrations/instagram';
+import { lastInstagramStats } from '../adapters/instagram';
 import type { InstagramStatus, SyncResult } from '../../shared/types';
 
 const STATE_COOKIE = 'swb_ig_state';
@@ -187,7 +188,11 @@ export function integrationRoutes(): Router {
     let body: SyncResult;
     try {
       const s = await syncAccountDetailed(req.db, id);
-      body = { ok: true, message: `同步完成：新增 ${s.newPosts} 篇貼文、${s.newComments} 則留言，自動回覆 ${s.autoReplied} 則（平台回傳 ${s.fetched} 則留言${s.skippedOwn ? `，其中 ${s.skippedOwn} 則是帳號自己的留言已略過` : ''}）`, newPosts: s.newPosts, newComments: s.newComments, autoReplied: s.autoReplied };
+      const st = lastInstagramStats.get(id);
+      const diag = st
+        ? `；Instagram 顯示最近 ${st.media} 篇貼文共有 ${st.countedComments} 則留言，API 實際提供 ${st.returnedTopLevel} 則${st.countedComments > st.returnedTopLevel ? '（有留言被 Instagram 隱藏未提供，通常是開發模式只提供測試人員的留言）' : ''}`
+        : '';
+      body = { ok: true, message: `同步完成：新增 ${s.newPosts} 篇貼文、${s.newComments} 則留言，自動回覆 ${s.autoReplied} 則（平台回傳 ${s.fetched} 則留言${s.skippedOwn ? `，其中 ${s.skippedOwn} 則是帳號自己的留言已略過` : ''}${diag}）`, newPosts: s.newPosts, newComments: s.newComments, autoReplied: s.autoReplied };
     } catch (err) {
       await run(req.db, "UPDATE social_accounts SET status = 'error' WHERE id = ?", [id]);
       body = { ok: false, message: (err as Error).message, newPosts: 0, newComments: 0, autoReplied: 0 };

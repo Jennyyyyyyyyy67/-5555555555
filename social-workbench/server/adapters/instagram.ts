@@ -31,6 +31,9 @@ function toIncoming(c: ig.IgComment, mediaId: string, parentId: string | null): 
   };
 }
 
+/** 最近一次同步的統計（排查「IG 有留言但 API 沒回傳」用） */
+export const lastInstagramStats = new Map<number, { media: number; countedComments: number; returnedTopLevel: number }>();
+
 export function createInstagramAdapter(mock: PlatformAdapter): PlatformAdapter {
   const live = (a: AdapterAccount) => !!a.accessToken;
   return {
@@ -68,6 +71,11 @@ export function createInstagramAdapter(mock: PlatformAdapter): PlatformAdapter {
       const media = await ig.listMedia(a.accessToken!, 25);
       const lists = await Promise.all(media.map((m) => ig.listComments(a.accessToken!, m.id).then((cs) => ({ m, cs }))));
       const out: IncomingComment[] = [];
+      lastInstagramStats.set(a.id, {
+        media: media.length,
+        countedComments: media.reduce((n, m) => n + (m.comments_count ?? 0), 0),
+        returnedTopLevel: lists.reduce((n, l) => n + l.cs.length, 0),
+      });
       for (const { m, cs } of lists) {
         for (const c of cs) {
           out.push(toIncoming(c, m.id, null));

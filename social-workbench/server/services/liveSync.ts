@@ -13,7 +13,7 @@ function withTimeout<T>(p: Promise<T>, ms: number): Promise<T | 'timeout'> {
 
 async function safeSync(db: DB, accountId: number): Promise<SyncSummary | null> {
   try {
-    return await syncAccountDetailed(db, accountId);
+    return await syncAccountDetailed(db, accountId, { budgetMs: 6_000 });
   } catch (err) {
     console.warn(`[sync] 帳號 #${accountId} 同步失敗：`, (err as Error).message);
     await run(db, "UPDATE social_accounts SET status = 'error', last_checked_at = ? WHERE id = ?", [nowIso(), accountId]).catch(() => {});

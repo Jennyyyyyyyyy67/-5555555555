@@ -470,6 +470,8 @@ export async function processIncoming(
 export interface SyncSummary {
   /** 平台回傳的留言總數（含已處理、略過的） */
   fetched: number;
+  /** 超過時間預算、留待下次同步的留言數 */
+  remaining: number;
   skippedOwn: number;
   newPosts: number;
   newComments: number;
@@ -487,7 +489,9 @@ export async function syncAccount(db: DB, accountId: number): Promise<PipelineRe
  * 透過平台 adapter 取回貼文與新留言並逐則處理（模擬器、真實平台共用同一個流程）。
  * 已存在的留言會略過；自己帳號發出的回覆不會當成新留言；連結帳號之前的舊留言不會自動回覆。
  */
-export async function syncAccountDetailed(db: DB, accountId: number): Promise<SyncSummary> {
+export async function syncAccountDetailed(db: DB, accountId: number, opts: { budgetMs?: number } = {}): Promise<SyncSummary> {
+  const started = Date.now();
+  const budgetMs = opts.budgetMs ?? 20_000;
   const ctx = await loadContext(db, accountId);
   if (ctx.brand.is_active !== 1) throw badRequest('品牌已停用，無法接收新留言');
   const adapter = getAdapter(ctx.account.platform);
@@ -518,8 +522,19 @@ export async function syncAccountDetailed(db: DB, accountId: number): Promise<Sy
   const ownName = cred?.username ? `@${cred.username}`.toLowerCase() : null;
   const results: PipelineResult[] = [];
   let skippedOwn = 0;
-  for (const item of incoming) {
+  let remaining = 0;
+  // 連結後的新留言優先處理（需要自動回覆）；連結前的舊留言由新到舊匯入，一次處理不完就留到下次同步
+  const isNew = (i: (typeof incoming)[number]) => !cred || i.occurredAt >= cred.connected_at;
+  const ordered = [
+    ...incoming.filter(isNew),
+    ...incoming.filter((i) => !isNew(i)).sort((x, y) => y.occurredAt.localeCompare(x.occurredAt)),
+  ];
+  for (const item of ordered) {
     if (known.has(item.externalId)) continue;
+    if (Date.now() - started > budgetMs) {
+      remaining++;
+      continue;
+    }
     // 自己帳號的留言（例如系統送出的回覆）不是要處理的留言
     if (item.authorExternalId === ctx.account.external_id || (ownName && item.authorName.toLowerCase() === ownName)) {
       skippedOwn++;
@@ -554,7 +569,7 @@ export async function syncAccountDetailed(db: DB, accountId: number): Promise<Sy
     known.add(item.externalId);
   }
   await run(db, 'UPDATE social_accounts SET last_synced_at = ?, status = ? WHERE id = ?', [nowIso(), 'connected', accountId]);
-  return { fetched: incoming.length, skippedOwn, newPosts, newComments: results.length, autoReplied: results.filter((r) => r.decision === 'auto_replied').length, results };
+  return { fetched: incoming.length, remaining, skippedOwn, newPosts, newComments: results.length, autoReplied: results.filter((r) => r.decision === 'auto_replied').length, results };
 }
 
 export { mockFeed };

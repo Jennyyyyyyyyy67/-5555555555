@@ -17,6 +17,7 @@ import {
 } from '../../shared/constants';
 import type { CommentPreview, Paginated } from '../../shared/types';
 import { inboxRoutes } from './inbox';
+import { assistRoutes } from './assist';
 
 const DEFAULT_LIMIT = 50;
 const MAX_LIMIT = 200;
@@ -207,6 +208,7 @@ export function commentRoutes(): Router {
   });
 
   // 統一收件匣（列表、詳情與各種處理動作）；放在 /preview 之後，避免 /:id 吃掉 preview
+  r.use(assistRoutes());
   r.use(inboxRoutes());
 
   return r;

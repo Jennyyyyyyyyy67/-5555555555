@@ -22,6 +22,7 @@ import { badRequest, forbidden, HttpError } from '../lib/errors';
 import { nowIso } from '../lib/clock';
 import { needsKnowledge } from '../ai/knowledge';
 import { adapterAccountFor } from '../services/credentials';
+import { checkReply } from '../ai/compose';
 import { autoSyncLive } from '../services/liveSync';
 import { can } from '../../shared/permissions';
 import {
@@ -157,7 +158,7 @@ function qint(v: unknown, label: string): number | undefined {
   return Number(s);
 }
 
-async function buildDetail(db: DB, user: AuthUser, scope: BrandScope, id: number): Promise<CommentDetail> {
+export async function buildDetail(db: DB, user: AuthUser, scope: BrandScope, id: number): Promise<CommentDetail> {
   const now = nowIso();
   const row = await get<ItemRow>(db, `${ITEM_SELECT} WHERE c.id = :id`, { id });
   if (!row || !scope.activeBrandIds.includes(row.brand_id as number)) throw new HttpError(404, 'not_found', '找不到留言');
@@ -579,6 +580,8 @@ export function inboxRoutes(): Router {
   const replySchema = z.object({
     body: z.string().trim().min(1, '請輸入回覆內容').max(2000, '回覆最多 2000 個字'),
     statusAfter: z.enum(['waiting', 'done'], { errorMap: () => ({ message: '請選擇回覆後的狀態：等待對方或已完成' }) }),
+    suggestionId: z.number().int().positive().nullable().optional(),
+    confirmWarnings: z.boolean().optional(),
   });
   r.post('/:id/reply', async (req: Request, res: Response) => {
     const { user, scope } = authed(req);
@@ -593,6 +596,16 @@ export function inboxRoutes(): Router {
       [c.social_account_id],
     ))!;
     if (!getAccountType(account.platform, account.account_type)?.capabilities.reply) throw badRequest('此平台帳號不支援回覆');
+    // 送出前檢查：禁用詞一定要改；其他提醒（承諾、查無根據的金額日期）需人工確認後才送出
+    const warnings = await checkReply(db, c.brand_id, input.body);
+    const blocking = warnings.filter((w) => w.level === 'block');
+    if (blocking.length) throw new HttpError(422, 'reply_blocked', blocking.map((w) => w.message).join('；'), { warnings });
+    if (warnings.length && !input.confirmWarnings) throw new HttpError(422, 'reply_warnings', '送出前請確認以下提醒', { warnings });
+    const suggestion = input.suggestionId
+      ? await get<{ id: number; body: string; comment_id: number }>(db, 'SELECT id, body, comment_id FROM ai_suggestions WHERE id = ?', [input.suggestionId])
+      : undefined;
+    if (input.suggestionId && (!suggestion || suggestion.comment_id !== c.id)) throw badRequest('找不到這則 AI 建議，請重新產生');
+    const edited = suggestion ? suggestion.body.trim() !== input.body.trim() : false;
     const post = (await get<{ external_id: string }>(db, 'SELECT external_id FROM posts WHERE id = ?', [c.post_id]))!;
     const adapter = getAdapter(account.platform);
     const sent = adapter
@@ -608,8 +621,10 @@ export function inboxRoutes(): Router {
         comment_id: c.id,
         brand_id: c.brand_id,
         body: input.body,
-        source: 'manual',
-        was_edited: false,
+        source: suggestion ? (edited ? 'ai_edited' : 'ai_adopted') : 'manual',
+        ai_suggestion_id: suggestion?.id ?? null,
+        ai_original_body: suggestion?.body ?? null,
+        was_edited: edited,
         sent_by_id: user.id,
         status_after: input.statusAfter,
         platform_reply_id: sent.externalReplyId,
@@ -632,6 +647,7 @@ export function inboxRoutes(): Router {
         updated_at: now,
       });
       await claimIfUnassigned(db, fresh, user, '回覆時自動認領');
+      if (suggestion) await run(db, 'UPDATE ai_suggestions SET is_adopted = 1 WHERE id = ?', [suggestion.id]);
       await audit(db, {
         actorType: 'user',
         actorUserId: user.id,
@@ -641,7 +657,7 @@ export function inboxRoutes(): Router {
         targetType: 'comment',
         targetId: c.id,
         assigneeIdAtTime: fresh.assignee_id ?? user.id,
-        summary: `${user.name} 回覆留言，狀態改為「${STATUS_LABELS[input.statusAfter]}」`,
+        summary: `${user.name} ${suggestion ? (edited ? '修改 AI 建議後' : '採用 AI 建議') : ''}回覆留言，狀態改為「${STATUS_LABELS[input.statusAfter]}」${warnings.length ? `（已確認 ${warnings.length} 項提醒）` : ''}`,
         before: { status: fresh.status },
         after: { status: input.statusAfter },
         detail: {
@@ -649,6 +665,9 @@ export function inboxRoutes(): Router {
           body: input.body,
           firstResponse: first,
           slaMet: first && slaRow?.sla_due_at ? now <= slaRow.sla_due_at : null,
+          source: suggestion ? (edited ? 'ai_edited' : 'ai_adopted') : 'manual',
+          suggestionId: suggestion?.id ?? null,
+          confirmedWarnings: warnings.length ? warnings.map((w) => w.message) : undefined,
         },
       });
     });

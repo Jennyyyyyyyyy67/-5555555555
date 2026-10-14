@@ -12,6 +12,8 @@ import { automationRoutes } from './automation';
 import { notificationRoutes } from './inbox';
 import { brandCategorySettingRoutes, categoryRoutes } from './categories';
 import { integrationRoutes, webhookRoutes } from './integrations';
+import { knowledgeRoutes } from './knowledge';
+import { styleRoutes } from './style';
 
 /** 所有 API 路由。除了 /auth 之外都需要登入；更細的角色與品牌權限由各路由自行檢查。 */
 export function apiRouter(): Router {
@@ -21,6 +23,8 @@ export function apiRouter(): Router {
   r.use('/integrations', integrationRoutes());
   r.use('/meta', requireAuth(), metaRoutes());
   r.use('/brands/:id/category-settings', requireAuth(), brandCategorySettingRoutes());
+  r.use('/brands/:id/style', requireAuth(), styleRoutes());
+  r.use('/knowledge', requireAuth(), knowledgeRoutes());
   r.use('/brands', requireAuth(), brandRoutes());
   r.use('/categories', requireAuth(), categoryRoutes());
   r.use('/accounts', requireAuth(), accountRoutes());

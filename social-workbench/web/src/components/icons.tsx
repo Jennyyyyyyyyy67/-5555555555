@@ -142,6 +142,19 @@ export const IconBolt = (p: IconProps) => (
   </Svg>
 );
 
+export const IconBook = (p: IconProps) => (
+  <Svg {...p}>
+    <path d="M4 5.5A2.5 2.5 0 016.5 3H20v15H6.5A2.5 2.5 0 004 20.5z" />
+    <path d="M4 20.5A2.5 2.5 0 016.5 18H20v3H6.5A2.5 2.5 0 014 20.5zM8 7h8M8 11h6" />
+  </Svg>
+);
+
+export const IconSparkle = (p: IconProps) => (
+  <Svg {...p}>
+    <path d="M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8zM19 15l.8 2.2L22 18l-2.2.8L19 21l-.8-2.2L16 18l2.2-.8z" />
+  </Svg>
+);
+
 // ---------- 平台圖示 ----------
 const PLATFORM_STYLE: Record<string, { bg: string; text: string }> = {
   facebook: { bg: '#1877f2', text: 'f' },

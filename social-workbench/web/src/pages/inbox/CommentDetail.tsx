@@ -12,6 +12,7 @@ import {
   INTERACTION_ACTION_LABELS,
   OPEN_STATUSES,
   PRIORITY_LABELS,
+  PRIORITIES,
   RISK_FLAG_LABELS,
   RISK_LEVEL_LABELS,
   ROLE_LABELS,
@@ -21,6 +22,8 @@ import {
 } from '../../../../shared/constants';
 import type { CommentDetail, ReplyInput } from '../../../../shared/types';
 import { SlaChip, syncServerTime, useNow } from './sla';
+import { ReplyComposer } from './ReplyComposer';
+import { useMeta } from '../../lib/meta';
 
 interface Props {
   id: number;
@@ -141,15 +144,19 @@ export default function CommentDetailPane({ id, onClose, onChanged, onFilterPost
           <Thread d={d} />
           {isOpen || c.status === 'waiting' ? (
             caps.reply && c.visibility !== 'deleted' ? (
-              <ReplyBox
+              <ReplyComposer
                 key={c.id}
+                commentId={c.id}
                 disabled={!canWrite}
-                busy={busy === 'reply'}
                 lockMine={!!d.lock?.isMine}
                 onFocusStart={() => {
                   if (!d.lock && canWrite) void startHandling();
                 }}
-                onSend={(input) => act('reply', () => api.post<CommentDetail>(`/comments/${id}/reply`, input), input.statusAfter === 'done' ? '已回覆並完成' : '已回覆，等待對方回應')}
+                onSent={(nd, msg) => {
+                  apply(nd);
+                  toast.success(msg);
+                  onChanged();
+                }}
               />
             ) : (
               <p className="muted small detail-pad-x">{c.visibility === 'deleted' ? '留言已刪除，無法回覆。' : '這個平台／帳號類型不支援透過系統回覆。'}</p>
@@ -161,7 +168,7 @@ export default function CommentDetailPane({ id, onClose, onChanged, onFilterPost
         <aside className="detail-side">
           <AssignCard d={d} busy={busy} act={act} />
           <TimesCard d={d} />
-          <AnalysisCard d={d} />
+          <AnalysisCard d={d} busy={busy} act={act} />
           <FollowUpCard d={d} busy={busy} act={act} />
           <NotesCard d={d} busy={busy} act={act} />
           <ActionsCard d={d} busy={busy} act={act} />
@@ -295,45 +302,6 @@ function Thread({ d }: { d: CommentDetail }) {
           </div>
         ),
       )}
-    </section>
-  );
-}
-
-// ---------- 回覆 ----------
-function ReplyBox({ disabled, busy, lockMine, onFocusStart, onSend }: { disabled: boolean; busy: boolean; lockMine: boolean; onFocusStart: () => void; onSend: (input: ReplyInput) => Promise<boolean> }) {
-  const [body, setBody] = useState('');
-  const send = async (statusAfter: ReplyInput['statusAfter']) => {
-    if (await onSend({ body: body.trim(), statusAfter })) setBody('');
-  };
-  const empty = body.trim().length === 0;
-  return (
-    <section className="reply-box">
-      <label className="small strong" htmlFor="reply-body">
-        回覆留言（會公開顯示在平台上）
-      </label>
-      <Textarea
-        id="reply-body"
-        rows={4}
-        value={body}
-        disabled={disabled}
-        placeholder={disabled ? '別人正在處理這則留言' : '輸入回覆內容…（點這裡會自動標示為「處理中」）'}
-        onFocus={() => {
-          if (!lockMine) onFocusStart();
-        }}
-        onChange={(e) => setBody(e.target.value)}
-        maxLength={2000}
-      />
-      <div className="reply-actions">
-        <span className="muted small">{body.length} / 2000</span>
-        <span className="spacer" />
-        <Button size="sm" disabled={disabled || empty} loading={busy} onClick={() => void send('waiting')} title="已回覆但還需要對方回應（例如請對方私訊訂單編號）">
-          送出，等待對方回應
-        </Button>
-        <Button size="sm" variant="primary" disabled={disabled || empty} loading={busy} onClick={() => void send('done')}>
-          送出並完成
-        </Button>
-      </div>
-      <p className="muted small hint">「已回覆」不等於「已完成」：若還需要對方提供資料或確認，請選「等待對方回應」。</p>
     </section>
   );
 }
@@ -528,14 +496,30 @@ function TimesCard({ d }: { d: CommentDetail }) {
   );
 }
 
-function AnalysisCard({ d }: { d: CommentDetail }) {
+function AnalysisCard({ d, busy, act }: { d: CommentDetail; busy: string | null; act: Act }) {
   const c = d.comment;
+  const ai = d.ai;
+  const { meta } = useMeta();
+  const [open, setOpen] = useState(false);
+  const [cat, setCat] = useState(c.categoryKey ?? '');
+  const [prio, setPrio] = useState<string>(c.priority ?? 'medium');
+  const [reason, setReason] = useState('');
   return (
-    <SideCard title="AI 判斷">
+    <SideCard
+      title="AI 判斷"
+      action={
+        d.permissions.canHandle && (
+          <button className="link-btn" onClick={() => { setCat(c.categoryKey ?? ''); setPrio(c.priority ?? 'medium'); setReason(''); setOpen(true); }}>
+            修正
+          </button>
+        )
+      }
+    >
       <div className="row-wrap">
         {c.categoryName ? <Badge tone="blue">{c.categoryName}</Badge> : <span className="muted small">尚未分類</span>}
         {c.sentiment && <Badge tone={c.sentiment === 'negative' ? 'red' : c.sentiment === 'positive' ? 'green' : 'gray'}>{SENTIMENT_LABELS[c.sentiment]}</Badge>}
         {c.riskLevel && c.riskLevel !== 'none' && <Badge tone={c.riskLevel === 'high' ? 'solid-red' : 'orange'}>風險：{RISK_LEVEL_LABELS[c.riskLevel]}</Badge>}
+        {ai?.knowledgeGap && <Badge tone="orange">知識不足</Badge>}
       </div>
       {c.riskFlags.length > 0 && (
         <div className="row-wrap" style={{ marginTop: 8 }}>
@@ -546,8 +530,77 @@ function AnalysisCard({ d }: { d: CommentDetail }) {
           ))}
         </div>
       )}
+      {ai && (
+        <dl className="kv" style={{ marginTop: 8 }}>
+          <dt>AI 信心</dt>
+          <dd>{ai.confidence !== null ? `${Math.round(ai.confidence * 100)}%` : '—'}</dd>
+          {ai.reasons.length > 0 && (
+            <>
+              <dt>判斷依據</dt>
+              <dd>{ai.reasons.join('；')}</dd>
+            </>
+          )}
+          {ai.forceHuman.length > 0 && (
+            <>
+              <dt>轉人工原因</dt>
+              <dd>{ai.forceHuman.map((r) => r.label).join('；')}</dd>
+            </>
+          )}
+        </dl>
+      )}
+      {ai?.correctedByName !== null && ai?.correctedByName !== undefined && (
+        <p className="small muted" style={{ margin: '8px 0 0' }}>
+          ✎ {ai.correctedByName || '人工'}已修正{ai.originalCategoryName ? `（AI 原判斷：${ai.originalCategoryName}）` : ''}
+        </p>
+      )}
       {c.tags.length > 0 && <p className="small muted" style={{ margin: '8px 0 0' }}>標籤：{c.tags.join('、')}</p>}
       {c.needsHuman && <p className="small warn-text">⚠ 這則留言必須由人工判斷與回覆，AI 不會自動處理。</p>}
+      <Modal
+        open={open}
+        title="修正 AI 判斷"
+        size="sm"
+        onClose={() => setOpen(false)}
+        footer={
+          <>
+            <Button onClick={() => setOpen(false)}>取消</Button>
+            <Button
+              variant="primary"
+              loading={busy === 'classify'}
+              onClick={async () => {
+                const ok = await act('classify', () => api.post<CommentDetail>(`/comments/${c.id}/classify`, { categoryKey: cat || undefined, priority: prio, reason: reason.trim() || undefined }), '已修正分類');
+                if (ok) setOpen(false);
+              }}
+            >
+              儲存
+            </Button>
+          </>
+        }
+      >
+        <div className="stack">
+          <Field label="留言類型">
+            <Select value={cat} onChange={(e) => setCat(e.target.value)}>
+              {(meta?.categories ?? []).filter((x) => x.isActive).map((x) => (
+                <option key={x.key} value={x.key}>
+                  {x.name}
+                </option>
+              ))}
+            </Select>
+          </Field>
+          <Field label="優先級">
+            <Select value={prio} onChange={(e) => setPrio(e.target.value)}>
+              {PRIORITIES.map((p) => (
+                <option key={p} value={p}>
+                  {PRIORITY_LABELS[p]}
+                </option>
+              ))}
+            </Select>
+          </Field>
+          <Field label="修正原因（選填）">
+            <TextInput value={reason} onChange={(e) => setReason(e.target.value)} placeholder="例如：其實是團購詢問" maxLength={200} />
+          </Field>
+          <p className="muted small" style={{ margin: 0 }}>修正會留下紀錄，並依新類型重新計算尚未回覆留言的回覆時限。</p>
+        </div>
+      </Modal>
     </SideCard>
   );
 }

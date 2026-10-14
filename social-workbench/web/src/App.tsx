@@ -12,6 +12,8 @@ import UsersPage from './pages/settings/UsersPage';
 import MockDataPage from './pages/settings/MockDataPage';
 import AutomationPage from './pages/automation/AutomationPage';
 import CategoriesPage from './pages/settings/CategoriesPage';
+import KnowledgePage from './pages/knowledge/KnowledgePage';
+import StylePage from './pages/settings/StylePage';
 
 export default function App() {
   return (
@@ -31,6 +33,8 @@ export default function App() {
         <Route index element={<Navigate to="/inbox" replace />} />
         <Route path="/inbox" element={<InboxPage />} />
         <Route path="/inbox/:id" element={<InboxPage />} />
+        <Route path="/knowledge" element={<KnowledgePage />} />
+        <Route path="/settings/style" element={<RequirePermission perm="viewAccounts"><StylePage /></RequirePermission>} />
         <Route path="/automation" element={<RequirePermission perm="testAutomation"><AutomationPage /></RequirePermission>} />
         <Route path="/settings/brands" element={<RequirePermission perm="manageBrands"><BrandsPage /></RequirePermission>} />
         <Route path="/settings/accounts" element={<RequirePermission perm="viewAccounts"><AccountsPage /></RequirePermission>} />

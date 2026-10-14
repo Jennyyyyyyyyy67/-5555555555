@@ -1,0 +1,42 @@
+/* AI 回覆風格 */
+.st-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(300px, 420px);
+  gap: 16px;
+  align-items: start;
+}
+.st-fields {
+  border: 0;
+  padding: 0;
+  margin: 0;
+  min-width: 0;
+}
+.st-preview {
+  position: sticky;
+  top: calc(var(--topbar-h) + 12px);
+}
+.st-preview .variant {
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 8px 10px;
+}
+.st-preview .variant p {
+  margin: 6px 0 0;
+  font-size: 13px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+}
+.chip.on {
+  border-color: var(--primary);
+  background: var(--primary-weak);
+  color: var(--primary-text);
+}
+@media (max-width: 1000px) {
+  .st-layout {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .st-preview {
+    position: static;
+  }
+}

@@ -857,3 +857,16 @@ export interface SyncResult {
   newComments: number;
   autoReplied: number;
 }
+
+// ---------- 企業自助註冊 ----------
+export interface SignupInput {
+  companyName: string;
+  name: string;
+  email: string;
+  password: string;
+}
+
+export interface AuthConfigResponse {
+  signupEnabled: boolean;
+  demoMode: boolean;
+}

@@ -19,12 +19,15 @@ CREATE TABLE IF NOT EXISTS users (
   name TEXT NOT NULL,
   email TEXT NOT NULL,
   password_hash TEXT NOT NULL,
-  role TEXT NOT NULL CHECK (role IN ('admin','supervisor','operator')),
+  role TEXT NOT NULL CHECK (role IN ('admin','owner','supervisor','operator')),
   is_active INTEGER NOT NULL DEFAULT 1,
   last_login_at TEXT,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL
 );
+-- 舊資料庫升級：加入「企業負責人」角色
+ALTER TABLE users DROP CONSTRAINT IF EXISTS users_role_check;
+ALTER TABLE users ADD CONSTRAINT users_role_check CHECK (role IN ('admin','owner','supervisor','operator'));
 
 -- Email 不分大小寫唯一
 CREATE UNIQUE INDEX IF NOT EXISTS users_email_lower ON users (lower(email));

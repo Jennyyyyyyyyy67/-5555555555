@@ -6,32 +6,34 @@ export const PERMISSIONS = {
   /** 新增、編輯、停用品牌 */
   manageBrands: ['admin'],
   /** 新增、編輯社群帳號、測試連線 */
-  manageAccounts: ['admin'],
+  manageAccounts: ['admin', 'owner'],
   /** 查看社群帳號（唯讀） */
-  viewAccounts: ['admin', 'supervisor'],
+  viewAccounts: ['admin', 'owner', 'supervisor'],
   /** 新增、編輯人員、角色與授權品牌 */
   manageUsers: ['admin'],
   /** 查看負責品牌的人員（唯讀） */
-  viewUsers: ['admin', 'supervisor'],
+  viewUsers: ['admin', 'owner', 'supervisor'],
   /** 重設模擬資料、查看資料量 */
   manageMockData: ['admin'],
   /** 處理留言（回覆、變更狀態等） */
-  handleComments: ['admin', 'supervisor', 'operator'],
+  handleComments: ['admin', 'owner', 'supervisor', 'operator'],
   /** 重新指派負責人、強制接手處理中鎖定 */
-  reassignComments: ['admin', 'supervisor'],
-  overrideLock: ['admin', 'supervisor'],
+  reassignComments: ['admin', 'owner', 'supervisor'],
+  overrideLock: ['admin', 'owner', 'supervisor'],
   /** 留言類型、時效、AI 風格、自動化規則等設定 */
-  manageSettings: ['admin'],
+  manageSettings: ['admin', 'owner'],
+  /** 影響所有企業的系統設定（例如共用的留言類型） */
+  manageSystem: ['admin'],
   /** 新增、修改、停用自動回覆規則 */
-  manageAutomation: ['admin'],
+  manageAutomation: ['admin', 'owner'],
   /** 查看自動回覆規則、用測試工具與模擬器試跑 */
-  testAutomation: ['admin', 'supervisor'],
+  testAutomation: ['admin', 'owner', 'supervisor'],
   /** 審核知識與回覆範例 */
-  approveKnowledge: ['admin', 'supervisor'],
+  approveKnowledge: ['admin', 'owner', 'supervisor'],
   /** 數據看板、報表 */
-  viewDashboard: ['admin', 'supervisor'],
+  viewDashboard: ['admin', 'owner', 'supervisor'],
   /** 操作紀錄 */
-  viewAuditLogs: ['admin', 'supervisor'],
+  viewAuditLogs: ['admin', 'owner', 'supervisor'],
 } as const satisfies Record<string, readonly Role[]>;
 
 export type Permission = keyof typeof PERMISSIONS;

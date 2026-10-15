@@ -4,6 +4,7 @@ import { BrandScopeProvider } from './brand/BrandScope';
 import { MetaProvider } from './lib/meta';
 import { AppShell } from './layout/AppShell';
 import LoginPage from './pages/LoginPage';
+import SignupPage from './pages/SignupPage';
 import { NotFoundPage, RequirePermission } from './pages/StatusPages';
 import InboxPage from './pages/inbox/InboxPage';
 import BrandsPage from './pages/settings/BrandsPage';
@@ -19,6 +20,7 @@ export default function App() {
   return (
     <Routes>
       <Route path="/login" element={<LoginPage />} />
+      <Route path="/signup" element={<SignupPage />} />
       <Route
         element={
           <RequireAuth>

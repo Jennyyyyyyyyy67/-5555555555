@@ -34,6 +34,8 @@ export const config = {
   distDir: `${root}dist`,
   /** 示範模式：資料庫為空時自動建立示範資料，並在登入頁顯示示範帳號 */
   demoMode: (process.env.DEMO_MODE ?? 'true') !== 'false',
+  /** 開放企業自助註冊（ALLOW_SIGNUP=false 可關閉） */
+  allowSignup: (process.env.ALLOW_SIGNUP ?? 'true') !== 'false',
   sessionTtlHours: Number(process.env.SESSION_TTL_HOURS ?? 12),
   /** 部署在 Vercel（HTTPS）時自動使用安全 cookie */
   cookieSecure: process.env.COOKIE_SECURE ? process.env.COOKIE_SECURE === 'true' : onVercel,

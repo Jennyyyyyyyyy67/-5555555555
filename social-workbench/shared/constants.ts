@@ -1,15 +1,17 @@
 // 前後端共用的列舉值與繁體中文標籤。
 // 規則：資料庫與 API 一律存英文 key，畫面顯示時再查這裡的中文標籤。
 
-export const ROLES = ['admin', 'supervisor', 'operator'] as const;
+export const ROLES = ['admin', 'owner', 'supervisor', 'operator'] as const;
 export type Role = (typeof ROLES)[number];
 export const ROLE_LABELS: Record<Role, string> = {
   admin: '管理員',
+  owner: '企業負責人',
   supervisor: '主管',
   operator: '操作人員',
 };
 export const ROLE_DESCRIPTIONS: Record<Role, string> = {
   admin: '管理整體系統、品牌、人員、規則與設定，可存取所有品牌。',
+  owner: '自助註冊的企業負責人：管理自己品牌的社群帳號、自動回覆、知識庫與回覆風格。',
   supervisor: '管理負責品牌的案件、查看數據、調整指派並可介入處理。',
   operator: '處理自己被授權品牌的留言。',
 };

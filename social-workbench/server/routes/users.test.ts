@@ -138,7 +138,7 @@ describe('新增人員 POST /api/users', () => {
     ['密碼太短', { password: 'short' }, '密碼至少需要 8 個字元'],
     ['Email 格式錯誤', { email: 'not-an-email' }, 'Email 格式不正確'],
     ['姓名空白', { name: '   ' }, '請輸入姓名'],
-    ['角色不存在', { role: 'owner' }, '請選擇角色'],
+    ['角色不存在', { role: 'superuser' }, '請選擇角色'],
   ])('輸入驗證：%s → 400', async (_label, override, message) => {
     const ctx = await createTestContext();
     const agent = await ctx.loginAs('admin');

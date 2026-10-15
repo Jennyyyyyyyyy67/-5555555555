@@ -26,7 +26,7 @@ import { PASSWORD_MIN_LENGTH, ROLE_DESCRIPTIONS, ROLE_LABELS, ROLES, type Role }
 import type { BrandSummary, UserInput, UserPatch, UserRow } from '../../../../shared/types';
 import './users.css';
 
-const ROLE_TONE: Record<Role, 'purple' | 'blue' | 'gray'> = { admin: 'purple', supervisor: 'blue', operator: 'gray' };
+const ROLE_TONE: Record<Role, 'purple' | 'blue' | 'gray'> = { admin: 'purple', owner: 'purple', supervisor: 'blue', operator: 'gray' };
 
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 

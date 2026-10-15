@@ -102,7 +102,7 @@ export async function brandDirectory(db: DB, brandId: number): Promise<Array<{ i
     db,
     `SELECT u.id, u.name, u.role FROM users u
      WHERE u.is_active = 1 AND (u.role = 'admin' OR EXISTS (SELECT 1 FROM user_brands ub WHERE ub.user_id = u.id AND ub.brand_id = ?))
-     ORDER BY CASE u.role WHEN 'operator' THEN 0 WHEN 'supervisor' THEN 1 ELSE 2 END, u.name`,
+     ORDER BY CASE u.role WHEN 'operator' THEN 0 WHEN 'supervisor' THEN 1 WHEN 'owner' THEN 2 ELSE 3 END, u.name`,
     [brandId],
   );
 }

@@ -1,13 +1,13 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react';
-import { Navigate, useLocation, useNavigate } from 'react-router-dom';
+import { Link, Navigate, useLocation, useNavigate } from 'react-router-dom';
 import { MANUAL_LOGIN_KEY, useAuth } from '../auth/AuthContext';
 import { api, errorMessage } from '../lib/api';
 import { useQuery } from '../lib/useQuery';
 import { Alert, Avatar, Badge, Button, Field, TextInput } from '../components/ui';
 import { ROLE_LABELS, type Role } from '../../../shared/constants';
-import type { DemoAccountsResponse } from '../../../shared/types';
+import type { AuthConfigResponse, DemoAccountsResponse } from '../../../shared/types';
 
-const ROLE_TONE: Record<Role, 'purple' | 'blue' | 'gray'> = { admin: 'purple', supervisor: 'blue', operator: 'gray' };
+const ROLE_TONE: Record<Role, 'purple' | 'blue' | 'gray'> = { admin: 'purple', owner: 'purple', supervisor: 'blue', operator: 'gray' };
 
 export default function LoginPage() {
   const { user, login, logoutReason, loading } = useAuth();
@@ -19,6 +19,7 @@ export default function LoginPage() {
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const demo = useQuery(() => api.get<DemoAccountsResponse>('/auth/demo-accounts'), []);
+  const cfg = useQuery(() => api.get<AuthConfigResponse>('/auth/config'), []);
 
   // 測試階段（示範模式）：打開網站就自動以示範管理員進入，不必登入。
   // 主動登出後不再自動進入，方便測試登入頁本身。
@@ -103,6 +104,11 @@ export default function LoginPage() {
               <Button type="submit" variant="primary" loading={busy === 'form'} disabled={!!busy} style={{ width: '100%' }}>
                 登入
               </Button>
+              {cfg.data?.signupEnabled && (
+                <p className="small muted" style={{ margin: 0, textAlign: 'center' }}>
+                  還沒有帳號？<Link to="/signup">免費註冊企業帳號</Link>
+                </p>
+              )}
             </div>
           </form>
         </section>

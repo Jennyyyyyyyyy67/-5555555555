@@ -27,7 +27,7 @@ const emailSchema = z
   .email('Email 格式不正確，請確認後再輸入（例如 name@company.com）');
 
 const roleSchema = z.enum(ROLES, {
-  errorMap: () => ({ message: '請選擇角色（管理員、主管或操作人員）' }),
+  errorMap: () => ({ message: '請選擇角色（管理員、企業負責人、主管或操作人員）' }),
 });
 
 const passwordSchema = z
@@ -79,7 +79,7 @@ interface UserDbRow {
 }
 
 const USER_COLUMNS = 'u.id, u.name, u.email, u.role, u.is_active, u.last_login_at, u.created_at, u.updated_at';
-const ROLE_ORDER_SQL = "CASE u.role WHEN 'admin' THEN 0 WHEN 'supervisor' THEN 1 ELSE 2 END";
+const ROLE_ORDER_SQL = "CASE u.role WHEN 'admin' THEN 0 WHEN 'owner' THEN 1 WHEN 'supervisor' THEN 2 ELSE 3 END";
 
 async function loadUser(db: DB, id: number): Promise<UserDbRow | undefined> {
   return await get<UserDbRow>(db, `SELECT ${USER_COLUMNS} FROM users u WHERE u.id = ?`, [id]);

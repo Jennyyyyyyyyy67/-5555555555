@@ -14,6 +14,7 @@ import type { BrandCategorySetting, CategoryInput, CategoryMeta } from '../../..
 export default function CategoriesPage() {
   const { can } = useAuth();
   const editable = can('manageSettings');
+  const editGlobal = can('manageSystem');
   return (
     <>
       <PageHeader
@@ -21,9 +22,10 @@ export default function CategoriesPage() {
         description="回覆時效＝從對方留言起算，必須在幾分鐘內第一次回覆。即將超時的提醒門檻在「品牌管理」設定。"
       />
       {!editable && <Alert>你可以檢視設定；只有管理員可以修改。</Alert>}
+      {editable && !editGlobal && <Alert>你可以調整自己品牌的回覆時效；留言類型由系統管理員統一維護。</Alert>}
       <div className="stack" style={{ gap: 20, marginTop: editable ? 0 : 12 }}>
         <BrandSla editable={editable} />
-        <CategoryList editable={editable} />
+        <CategoryList editable={editGlobal} />
       </div>
     </>
   );

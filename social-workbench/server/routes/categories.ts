@@ -33,7 +33,7 @@ export function categoryRoutes(): Router {
     res.json(await listCategories(req.db));
   });
 
-  r.post('/', requirePermission('manageSettings'), async (req: Request, res: Response) => {
+  r.post('/', requirePermission('manageSystem'), async (req: Request, res: Response) => {
     const { user } = authed(req);
     const input = categorySchema.parse(req.body);
     if (await get(req.db, 'SELECT id FROM comment_categories WHERE name = ?', [input.name])) throw conflict('已有相同名稱的留言類型', { field: 'name' });
@@ -70,7 +70,7 @@ export function categoryRoutes(): Router {
     res.status(201).json((await listCategories(req.db)).find((c) => c.id === id));
   });
 
-  r.patch('/:id', requirePermission('manageSettings'), async (req: Request, res: Response) => {
+  r.patch('/:id', requirePermission('manageSystem'), async (req: Request, res: Response) => {
     const { user } = authed(req);
     const id = Number(req.params.id);
     const current = (await listCategories(req.db)).find((c) => c.id === id);

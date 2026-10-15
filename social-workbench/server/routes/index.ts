@@ -13,12 +13,14 @@ import { notificationRoutes } from './inbox';
 import { brandCategorySettingRoutes, categoryRoutes } from './categories';
 import { integrationRoutes, webhookRoutes } from './integrations';
 import { knowledgeRoutes } from './knowledge';
+import { signupRoutes } from './signup';
 import { styleRoutes } from './style';
 
 /** 所有 API 路由。除了 /auth 之外都需要登入；更細的角色與品牌權限由各路由自行檢查。 */
 export function apiRouter(): Router {
   const r = Router();
   r.use('/auth', authRoutes());
+  r.use('/auth', signupRoutes());
   r.use('/webhooks', webhookRoutes());
   r.use('/integrations', integrationRoutes());
   r.use('/meta', requireAuth(), metaRoutes());

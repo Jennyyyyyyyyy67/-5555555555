@@ -41,11 +41,17 @@ export function InstagramConnect({ onChanged }: { onChanged: () => void }) {
   const [disconnect, setDisconnect] = useState<InstagramStatus['accounts'][number] | null>(null);
   const [notice, setNotice] = useState<{ tone: 'success' | 'danger'; text: string } | null>(null);
   const canManage = can('manageAccounts');
+  const [welcome] = useState(() => params.get('welcome') === '1');
 
   // Instagram 授權完成後帶回的結果
   useEffect(() => {
     const ok = params.get('ig');
     const err = params.get('ig_error');
+    if (params.get('welcome')) {
+      const next = new URLSearchParams(params);
+      next.delete('welcome');
+      setParams(next, { replace: true });
+    }
     if (!ok && !err) return;
     if (ok === 'connected') {
       setNotice({ tone: 'success', text: `已連結 Instagram 帳號 @${params.get('username') ?? ''}，並匯入 ${params.get('imported') ?? 0} 則現有留言（舊留言不會自動回覆，之後的新留言才會套用自動回覆規則）。` });
@@ -83,6 +89,11 @@ export function InstagramConnect({ onChanged }: { onChanged: () => void }) {
     >
       <div className="stack">
         {notice && <Alert tone={notice.tone}>{notice.text}</Alert>}
+        {welcome && (
+          <Alert tone="success">
+            <strong>歡迎加入！</strong>帳號已建立。第一步：按下方「連結 Instagram 帳號」，用你的 Instagram 專業帳號（商家或創作者）登入並允許，系統就會開始幫你整理留言。接著到「自動回覆」設定要自動回覆的關鍵字。
+          </Alert>
+        )}
         {!s ? (
           <span className="muted small">讀取中…</span>
         ) : !s.configured ? (

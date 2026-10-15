@@ -14,6 +14,7 @@ import { badRequest, HttpError, notFound } from '../lib/errors';
 import { needsKnowledge, searchKnowledge } from '../ai/knowledge';
 import { adapterAccountFor } from './credentials';
 import type { KnowledgeSearchResult } from '../../shared/types';
+import type { IncomingComment } from '../adapters/types';
 
 /** 目前使用的 AI；階段 3 起可依設定切換 */
 export const ai: AIProvider = mockProvider;
@@ -276,7 +277,13 @@ export async function processIncoming(
   db: DB,
   ctx: Context,
   c: { postId: number; parentCommentId: number | null; externalId: string; authorName: string; authorExternalId: string; body: string; rating: number | null; occurredAt: string },
-  opts: { allowAutomation?: boolean } = {},
+  opts: {
+    allowAutomation?: boolean;
+    /** 連結帳號之前就存在的留言：不計回覆時效（不然一匯入就顯示超時好幾天） */
+    historical?: boolean;
+    /** 已經在平台上被本帳號回覆（例如小編直接用 App 回）：視為已回覆並完成 */
+    ownReplyAt?: string | null;
+  } = {},
 ): Promise<PipelineResult> {
   const now = nowIso();
   const result = await decide(db, {
@@ -305,7 +312,7 @@ export async function processIncoming(
         [ctx.brand.id, category.id],
       )
     : undefined;
-  const slaMinutes = setting && setting.sla_enabled === 1 && setting.sla_minutes ? setting.sla_minutes : null;
+  const slaMinutes = !opts.historical && setting && setting.sla_enabled === 1 && setting.sla_minutes ? setting.sla_minutes : null;
   const slaDueAt = slaMinutes ? addMinutes(c.occurredAt, slaMinutes) : null;
   const forced = result.matchedRule?.action === 'force_human' ? result.matchedRule : null;
   const critical = !!forced || result.forceHuman.some((r) => ['sensitive', 'complaint', 'refund', 'promise', 'risk'].includes(r.code));
@@ -335,7 +342,10 @@ export async function processIncoming(
       rating: c.rating,
       occurred_at: c.occurredAt,
       fetched_at: now,
-      status: a.categoryKey === 'no_reply' ? 'pending' : 'pending',
+      status: opts.ownReplyAt ? 'done' : 'pending',
+      first_response_at: opts.ownReplyAt ?? null,
+      first_response_type: opts.ownReplyAt ? 'human' : null,
+      completed_at: opts.ownReplyAt ? now : null,
       priority: forced?.raisePriority ? 'high' : a.priority,
       assignee_id: forcedAssignee?.id ?? null,
       original_assignee_id: forcedAssignee?.id ?? null,
@@ -399,6 +409,20 @@ export async function processIncoming(
       summary: `AI 判斷為「${result.categoryName}」，信心 ${Math.round(a.confidence * 100)}%${result.forceHuman.length ? `，需人工：${result.forceHuman.map((r) => r.label).join('、')}` : ''}`,
       detail: { analysisId, analysis: a, forceHuman: result.forceHuman },
     });
+
+    if (opts.ownReplyAt) {
+      await audit(db, {
+        actorType: 'system',
+        brandId: ctx.brand.id,
+        commentId,
+        action: 'comment.replied_on_platform',
+        targetType: 'comment',
+        targetId: commentId,
+        summary: '這則留言已經在平台上被本帳號回覆（例如直接用 App 回覆），標示為已完成',
+        after: { status: 'done' },
+        detail: { ownReplyAt: opts.ownReplyAt },
+      });
+    }
 
     // 對方在「等待對方」的留言底下回覆：原留言結束，後續由這則新留言接續處理
     if (parent && parent.status === 'waiting') {
@@ -566,6 +590,50 @@ export interface SyncSummary {
   results: PipelineResult[];
 }
 
+const OPEN_STATUSES = "('pending', 'in_progress', 'transferred')";
+
+/**
+ * 修正已匯入的真實平台留言：
+ * 1. 其實是本帳號自己的回覆 → 無需處理
+ * 2. 已經在平台上被本帳號回覆（小編直接用 App 回）→ 已完成
+ * 3. 連結帳號之前的舊留言 → 不計回覆時效
+ */
+async function reconcileExisting(db: DB, ctx: Context, connectedAt: string, incoming: IncomingComment[], known: Set<string>): Promise<void> {
+  const now = nowIso();
+  const fix = async (externalId: string, status: 'no_action' | 'done', firstResponseAt: string | null, summary: string, action: string) => {
+    const row = await get<{ id: number; status: string; first_response_at: string | null }>(
+      db,
+      `SELECT id, status, first_response_at FROM comments WHERE social_account_id = ? AND external_id = ? AND status IN ${OPEN_STATUSES}`,
+      [ctx.account.id, externalId],
+    );
+    if (!row) return;
+    await tx(db, async () => {
+      await updateById(db, 'comments', row.id, {
+        status,
+        completed_at: now,
+        sla_due_at: status === 'no_action' ? null : undefined,
+        first_response_at: !row.first_response_at && firstResponseAt ? firstResponseAt : undefined,
+        first_response_type: !row.first_response_at && firstResponseAt ? 'human' : undefined,
+        locked_by_id: null,
+        locked_at: null,
+        lock_expires_at: null,
+        updated_at: now,
+      });
+      await audit(db, { actorType: 'system', brandId: ctx.brand.id, commentId: row.id, action, targetType: 'comment', targetId: row.id, summary, before: { status: row.status }, after: { status } });
+    });
+  };
+  for (const item of incoming) {
+    if (!known.has(item.externalId)) continue;
+    if (item.isOwn) await fix(item.externalId, 'no_action', null, '這是本帳號自己的回覆，不是需要處理的留言', 'comment.own_reply_detected');
+    else if (item.hasOwnReply) await fix(item.externalId, 'done', item.ownReplyAt ?? null, '已經在平台上被本帳號回覆（例如直接用 App 回覆），標示為已完成', 'comment.replied_on_platform');
+  }
+  await run(
+    db,
+    'UPDATE comments SET sla_due_at = NULL, sla_minutes = NULL WHERE social_account_id = ? AND occurred_at < ? AND first_response_at IS NULL AND sla_due_at IS NOT NULL',
+    [ctx.account.id, connectedAt],
+  );
+}
+
 const isUniqueViolation = (e: unknown) => (e as { code?: string })?.code === '23505';
 
 export async function syncAccount(db: DB, accountId: number): Promise<PipelineResult[]> {
@@ -618,6 +686,10 @@ export async function syncAccountDetailed(db: DB, accountId: number, opts: { bud
   ];
   for (const item of ordered) {
     if (known.has(item.externalId)) continue;
+    if (item.isOwn) {
+      skippedOwn++;
+      continue;
+    }
     if (Date.now() - started > budgetMs) {
       remaining++;
       continue;
@@ -647,7 +719,11 @@ export async function syncAccountDetailed(db: DB, accountId: number, opts: { bud
             rating: item.rating ?? null,
             occurredAt: item.occurredAt,
           },
-          { allowAutomation: (!cred || item.occurredAt >= cred.connected_at) && !item.hasOwnReply },
+          {
+            allowAutomation: (!cred || item.occurredAt >= cred.connected_at) && !item.hasOwnReply,
+            historical: !!cred && item.occurredAt < cred.connected_at,
+            ownReplyAt: item.hasOwnReply ? (item.ownReplyAt ?? item.occurredAt) : null,
+          },
         ),
       );
     } catch (err) {
@@ -655,6 +731,7 @@ export async function syncAccountDetailed(db: DB, accountId: number, opts: { bud
     }
     known.add(item.externalId);
   }
+  if (cred) await reconcileExisting(db, ctx, cred.connected_at, incoming, known);
   await run(db, 'UPDATE social_accounts SET last_synced_at = ?, status = ? WHERE id = ?', [nowIso(), 'connected', accountId]);
   return { fetched: incoming.length, remaining, skippedOwn, newPosts, newComments: results.length, autoReplied: results.filter((r) => r.decision === 'auto_replied').length, results };
 }

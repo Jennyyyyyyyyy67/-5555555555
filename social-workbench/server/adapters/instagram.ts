@@ -68,19 +68,41 @@ export function createInstagramAdapter(mock: PlatformAdapter): PlatformAdapter {
 
     async fetchComments(a, opts) {
       if (!live(a)) return mock.fetchComments(a, opts);
-      const media = await ig.listMedia(a.accessToken!, 25);
-      const lists = await Promise.all(media.map((m) => ig.listComments(a.accessToken!, m.id).then((cs) => ({ m, cs }))));
-      const out: IncomingComment[] = [];
+      const token = a.accessToken!;
+      const [media, me] = await Promise.all([ig.listMedia(token, 25), ig.getOwnIdentity(token).catch(() => null)]);
+      const ownIds = new Set([a.externalId, ...(me?.ids ?? [])]);
+      const ownName = (me?.username ?? '').toLowerCase();
+      const lists = await Promise.all(media.map((m) => ig.listComments(token, m.id).then((cs) => ({ m, cs }))));
       lastInstagramStats.set(a.id, {
         media: media.length,
         countedComments: media.reduce((n, m) => n + (m.comments_count ?? 0), 0),
         returnedTopLevel: lists.reduce((n, l) => n + l.cs.length, 0),
       });
+      const authorOf = (c: ig.IgComment) => ({ id: c.from?.id ?? '', name: (c.username ?? c.from?.username ?? '').toLowerCase() });
+      const isOwn = (c: ig.IgComment) => {
+        const x = authorOf(c);
+        return (!!x.id && ownIds.has(x.id)) || (!!ownName && x.name === ownName);
+      };
+      const out: IncomingComment[] = [];
       for (const { m, cs } of lists) {
         for (const c of cs) {
-          const own = (r: ig.IgComment) => r.from?.id === a.externalId;
-          out.push({ ...toIncoming(c, m.id, null), hasOwnReply: (c.replies?.data ?? []).some(own) });
-          for (const r of c.replies?.data ?? []) out.push(toIncoming(r, m.id, r.parent_id ?? c.id));
+          let replies = c.replies?.data ?? [];
+          // 巢狀查詢常常不回傳回覆的作者，這時另外查一次這則留言的回覆
+          if (replies.some((r) => !authorOf(r).id && !authorOf(r).name)) {
+            const full = await ig.listReplies(token, c.id).catch(() => [] as ig.IgComment[]);
+            replies = replies.map((r) => full.find((f) => f.id === r.id) ?? r);
+            for (const f of full) if (!replies.some((r) => r.id === f.id)) replies.push(f);
+          }
+          // 還是查不到作者的回覆：Instagram 對其他使用者一定會回傳帳號名稱，查不到的視為本帳號自己的回覆
+          const own = (r: ig.IgComment) => isOwn(r) || (!authorOf(r).id && !authorOf(r).name);
+          const ownReplies = replies.filter(own).sort((x, y) => x.timestamp.localeCompare(y.timestamp));
+          out.push({
+            ...toIncoming(c, m.id, null),
+            isOwn: isOwn(c),
+            hasOwnReply: ownReplies.length > 0,
+            ownReplyAt: ownReplies[0] ? new Date(ownReplies[0].timestamp).toISOString() : null,
+          });
+          for (const r of replies) out.push({ ...toIncoming(r, m.id, r.parent_id ?? c.id), isOwn: own(r) });
         }
       }
       // 舊的在前，被回覆的留言會先寫入

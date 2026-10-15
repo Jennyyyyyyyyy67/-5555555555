@@ -12,6 +12,8 @@ function fakeInstagram() {
     comments: [] as Array<Record<string, unknown>>,
     replies: [] as Array<{ commentId: string; message: string; token: string }>,
     hidden: [] as string[],
+    /** GET /{留言}/replies 的回傳（巢狀查詢沒有作者時會另外查） */
+    repliesOf: {} as Record<string, Array<Record<string, unknown>>>,
   };
   const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } });
   setInstagramFetch(async (input, init) => {
@@ -25,6 +27,7 @@ function fakeInstagram() {
     }
     if (url.pathname.endsWith('/m1/comments')) return json({ data: state.comments });
     const replyMatch = url.pathname.match(/\/([^/]+)\/replies$/);
+    if (replyMatch && method === 'GET') return json({ data: state.repliesOf[replyMatch[1]] ?? [] });
     if (replyMatch && method === 'POST') {
       const form = new URLSearchParams(String(init?.body));
       state.replies.push({ commentId: replyMatch[1], message: form.get('message') ?? '', token: form.get('access_token') ?? '' });
@@ -179,6 +182,60 @@ describe('Instagram 真實帳號串接', () => {
     expect(s1.body.newComments).toBe(1);
     expect(s1.body.autoReplied).toBe(0);
     expect(ig.replies).toHaveLength(0);
+  });
+
+  it('連結前的舊留言不計時效；小編在 App 上的回覆不會被當成新留言，被回覆過的留言標示已完成', async () => {
+    const ctx = await createTestContext();
+    const ig = fakeInstagram();
+    // 舊留言 A：小編已經在 App 上回覆（巢狀查詢沒有回傳作者，另外查也查不到）
+    ig.comments.push({
+      id: 'c-a', text: '跳得很好～', timestamp: ago(60 * 24 * 100), username: 'fan_a', from: { id: 'u-a', username: 'fan_a' },
+      replies: { data: [{ id: 'r-own', text: '@fan_a 謝謝！', timestamp: ago(60 * 24 * 99), parent_id: 'c-a' }] },
+    });
+    // 舊留言 B：沒有人回覆
+    ig.comments.push({ id: 'c-b', text: '後面對到', timestamp: ago(60 * 24 * 100), username: 'fan_b', from: { id: 'u-b', username: 'fan_b' } });
+    // 舊留言 C：底下有別人的回覆（巢狀沒作者，但另外查得到）
+    ig.comments.push({
+      id: 'c-c', text: '老師好', timestamp: ago(60 * 24 * 90), username: 'fan_c', from: { id: 'u-c', username: 'fan_c' },
+      replies: { data: [{ id: 'r-other', text: '+1', timestamp: ago(60 * 24 * 89), parent_id: 'c-c' }] },
+    });
+    ig.repliesOf['c-c'] = [{ id: 'r-other', text: '+1', timestamp: ago(60 * 24 * 89), username: 'fan_d', from: { id: 'u-d', username: 'fan_d' }, parent_id: 'c-c' }];
+    await connect(ctx);
+
+    const rows = await all<{ external_id: string; status: string; sla_due_at: string | null; first_response_type: string | null; author_name: string }>(
+      ctx.db,
+      "SELECT external_id, status, sla_due_at, first_response_type, author_name FROM comments WHERE external_id IN ('c-a', 'c-b', 'c-c', 'r-own', 'r-other') ORDER BY external_id",
+    );
+    const by = Object.fromEntries(rows.map((r) => [r.external_id, r]));
+    expect(by['r-own']).toBeUndefined(); // 自己的回覆不是留言
+    expect(by['c-a']).toMatchObject({ status: 'done', first_response_type: 'human', sla_due_at: null });
+    expect(by['c-b']).toMatchObject({ status: 'pending', sla_due_at: null }); // 連結前的留言不計時效
+    expect(by['r-other']).toMatchObject({ author_name: '@fan_d' });
+    expect(ig.replies).toHaveLength(0);
+  });
+
+  it('修正已匯入的資料：自己的回覆改為無需處理、已在 App 回覆的留言改為已完成、舊留言取消時效', async () => {
+    const ctx = await createTestContext();
+    const ig = fakeInstagram();
+    ig.comments.push({ id: 'c-x', text: '好看', timestamp: ago(60 * 24 * 30), username: 'fan_x', from: { id: 'u-x', username: 'fan_x' } });
+    const { admin } = await connect(ctx);
+    const acc = (await get<{ id: number }>(ctx.db, "SELECT id FROM social_accounts WHERE platform = 'instagram' AND external_id = ?", [IG_USER]))!;
+    const post = (await get<{ id: number }>(ctx.db, 'SELECT post_id AS id FROM comments WHERE external_id = ?', ['c-x']))!;
+    // 模擬舊版本匯入的錯誤資料：自己的回覆被當成留言、舊留言有時效
+    const now = new Date().toISOString();
+    await ctx.db.query(
+      `INSERT INTO comments (brand_id, social_account_id, post_id, parent_comment_id, external_id, author_name, author_external_id, body, occurred_at, fetched_at, status, sla_due_at, created_at, updated_at)
+       VALUES ($1, $2, $3, NULL, 'r-mine', 'Instagram 使用者', '', '@fan_x 謝謝', $4, $4, 'pending', $4, $4, $4)`,
+      [ctx.fx.brandA, acc.id, post.id, now],
+    );
+    await ctx.db.query("UPDATE comments SET sla_due_at = $1 WHERE external_id = 'c-x'", [now]);
+    ig.comments[0].replies = { data: [{ id: 'r-mine', text: '@fan_x 謝謝', timestamp: ago(10), parent_id: 'c-x' }] };
+    expect((await admin.post(`/api/integrations/sync/${acc.id}`)).status).toBe(200);
+    const mine = await get<{ status: string }>(ctx.db, "SELECT status FROM comments WHERE external_id = 'r-mine'");
+    const x = await get<{ status: string; first_response_at: string | null }>(ctx.db, "SELECT status, first_response_at FROM comments WHERE external_id = 'c-x'");
+    expect(mine?.status).toBe('no_action');
+    expect(x?.status).toBe('done');
+    expect(x?.first_response_at).not.toBeNull();
   });
 
   it('Webhook：驗證權杖、檢查簽章、收到通知後同步', async () => {

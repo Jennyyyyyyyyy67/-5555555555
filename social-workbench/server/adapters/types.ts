@@ -34,6 +34,10 @@ export interface IncomingComment {
   occurredAt: string;
   /** 平台上這則留言底下已經有本帳號的回覆（避免重複自動回覆） */
   hasOwnReply?: boolean;
+  /** 本帳號最早一則回覆的時間（直接在平台 App 上回覆的也算首次回覆） */
+  ownReplyAt?: string | null;
+  /** 這則是本帳號自己發的（例如小編在 App 上的回覆），不是要處理的留言 */
+  isOwn?: boolean;
 }
 
 /** 平台上的貼文／廣告／影片（尚未寫入資料庫的原始格式） */

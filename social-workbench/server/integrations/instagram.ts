@@ -171,6 +171,18 @@ export async function listComments(token: string, mediaId: string): Promise<IgCo
   return r.data ?? [];
 }
 
+/** 某則留言底下的回覆（巢狀查詢有時不回傳作者，需要另外查） */
+export async function listReplies(token: string, commentId: string): Promise<IgComment[]> {
+  const r = await call<{ data: IgComment[] }>(graph(`${commentId}/replies`, { fields: 'id,text,timestamp,username,from,parent_id', limit: '50', access_token: token }));
+  return r.data ?? [];
+}
+
+/** 本帳號的各種識別碼：留言的 from.id 可能是 user_id 或 id，兩個都要比對 */
+export async function getOwnIdentity(token: string): Promise<{ ids: string[]; username: string }> {
+  const r = await call<{ id: string; user_id?: string; username: string }>(graph('me', { fields: 'id,user_id,username', access_token: token }));
+  return { ids: [r.id, r.user_id].filter((x): x is string => !!x).map(String), username: r.username };
+}
+
 export async function replyToComment(token: string, commentId: string, message: string): Promise<string> {
   const r = await call<{ id: string }>(`${IG_GRAPH}/${IG_API_VERSION}/${commentId}/replies`, {
     method: 'POST',

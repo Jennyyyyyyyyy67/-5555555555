@@ -244,12 +244,21 @@ export default function MockDataPage() {
       <ConfirmDialog
         open={confirmOpen}
         danger
-        title="重設示範資料"
-        confirmText="重設示範資料"
+        title="重設整個系統的示範資料？"
+        confirmText="我了解，重設全部"
+        requireReason
+        reasonLabel="請輸入「重設」確認"
+        reasonPlaceholder="重設"
         busy={resetting}
         message={
           <div className="stack">
-            <p>會清空所有資料（留言、回覆、人員、設定、操作紀錄）並重新建立示範資料，這個動作無法復原。</p>
+            <p>會清空<strong>整個系統</strong>的資料並重新建立示範資料，這個動作無法復原。以下都會被清掉：</p>
+            <ul className="small" style={{ margin: 0, paddingLeft: 20 }}>
+              <li>品牌名稱改回示範名稱（例如改過名的品牌會變回「澄淨家電」）</li>
+              <li>自己設定的自動回覆規則、知識庫、AI 回覆風格、回覆時效</li>
+              <li>所有留言、回覆、操作紀錄，以及自助註冊的企業帳號</li>
+            </ul>
+            <p className="small">只有已連結的真實 Instagram 帳號會保留（留言會重新匯入）。<strong>只想清掉某個品牌的示範留言，請改用下方「清除品牌的示範資料」。</strong></p>
             <p className="muted">目前登入的帳號若仍存在於示範資料中會保持登入；否則會回到登入頁，請改用示範帳號登入。</p>
           </div>
         }

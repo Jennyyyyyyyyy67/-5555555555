@@ -22,6 +22,7 @@ import {
 import { BrandTag, IconRefresh, PlatformIcon } from '../../components/icons';
 import { ACTOR_TYPE_LABELS, COMMENT_STATUSES, STATUS_LABELS } from '../../../../shared/constants';
 import type { AuditLogEntry, MockResetResponse, MockStatsResponse } from '../../../../shared/types';
+import { ClearBrandDemo } from './ClearBrandDemo';
 import './mock.css';
 
 /** 示範留言的時間以建立當下推算，超過這個時間就建議重設 */
@@ -192,6 +193,13 @@ export default function MockDataPage() {
           </Card>
         </>
       )}
+
+      <ClearBrandDemo
+        onDone={() => {
+          void stats.reload();
+          void recent.reload();
+        }}
+      />
 
       <Card title="最近操作紀錄" bodyClassName="">
         {recent.error && !recent.data ? (

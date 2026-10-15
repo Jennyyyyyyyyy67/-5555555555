@@ -160,3 +160,30 @@ describe('POST /api/mock/reset', () => {
     expect(JSON.parse(logs[0].detail!)).toMatchObject({ brands: res.body.summary.brands });
   });
 });
+
+describe('清除品牌示範資料', () => {
+  it('刪除示範帳號與留言，保留已連結真實平台的帳號', async () => {
+    const { createTestContext } = await import('../test/helpers');
+    const { all, get, insert, run } = await import('../db');
+    const { nowIso } = await import('../lib/clock');
+    const ctx = await createTestContext();
+    const now = nowIso();
+    // 品牌甲加一個「真實」IG 帳號（有授權）與它的留言
+    const live = await insert(ctx.db, 'social_accounts', { brand_id: ctx.fx.brandA, platform: 'instagram', account_type: 'ig_account', name: 'IG', external_id: 'live-1', adapter_key: 'live:instagram', created_at: now, updated_at: now });
+    await run(ctx.db, 'INSERT INTO account_credentials (account_id, provider, access_token_enc, platform_user_id, connected_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)', [live, 'instagram', 'x', 'live-1', now, now]);
+    const post = await insert(ctx.db, 'posts', { brand_id: ctx.fx.brandA, social_account_id: live, external_id: 'p-live', content_type: 'post', published_at: now, created_at: now });
+    const kept = await insert(ctx.db, 'comments', { brand_id: ctx.fx.brandA, social_account_id: live, post_id: post, external_id: 'c-live', author_name: 'a', body: 'hi', occurred_at: now, fetched_at: now, created_at: now, updated_at: now });
+
+    const admin = await ctx.loginAs('admin');
+    const res = await admin.post('/api/mock/clear-brand').send({ brandId: ctx.fx.brandA, confirm: true, removeKnowledge: true });
+    expect(res.status).toBe(200);
+    expect(res.body.accounts).toBe(1);
+    expect(await get(ctx.db, 'SELECT id FROM comments WHERE id = ?', [ctx.fx.commentA])).toBeUndefined();
+    expect(await get(ctx.db, 'SELECT id FROM comments WHERE id = ?', [kept])).toBeTruthy();
+    expect((await all(ctx.db, 'SELECT id FROM social_accounts WHERE brand_id = ?', [ctx.fx.brandA])).length).toBe(1);
+    // 品牌乙不受影響
+    expect(await get(ctx.db, 'SELECT id FROM comments WHERE id = ?', [ctx.fx.commentB])).toBeTruthy();
+    const sup = await ctx.loginAs('sup');
+    expect((await sup.post('/api/mock/clear-brand').send({ brandId: ctx.fx.brandA, confirm: true })).status).toBe(403);
+  });
+});

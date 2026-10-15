@@ -181,5 +181,63 @@ export function mockRoutes(): Router {
     res.json(body);
   });
 
+  // 清除某個品牌的示範資料：刪掉沒有真實授權的示範帳號，以及它們的貼文、留言與相關紀錄。
+  // 已連結真實平台（例如 Instagram）的帳號與留言完全保留；操作紀錄只能新增，不會刪除。
+  r.post('/clear-brand', requirePermission('manageMockData'), async (req: Request, res: Response) => {
+    const { user, scope } = authed(req);
+    const input = z.object({ brandId: z.number().int().positive(), confirm: z.literal(true), removeKnowledge: z.boolean().optional() }).parse(req.body);
+    if (!scope.brandIds.includes(input.brandId)) throw badRequest('找不到品牌');
+    const db = req.db;
+    const brand = (await get<{ name: string }>(db, 'SELECT name FROM brands WHERE id = ?', [input.brandId]))!;
+    const accounts = await all<{ id: number }>(
+      db,
+      'SELECT a.id FROM social_accounts a LEFT JOIN account_credentials c ON c.account_id = a.id WHERE a.brand_id = ? AND c.account_id IS NULL',
+      [input.brandId],
+    );
+    const accIn = accounts.length ? sqlIn('social_account_id', accounts.map((a) => a.id)) : 'FALSE';
+    const result = await tx(db, async () => {
+      const comments = (await all<{ id: number }>(db, `SELECT id FROM comments WHERE ${accIn}`)).map((c) => c.id);
+      if (comments.length) {
+        const cIn = (col: string) => sqlIn(col, comments);
+        for (const t of ['replies', 'comment_actions', 'internal_notes', 'assignments', 'notifications', 'ai_suggestions', 'ai_analyses']) {
+          await run(db, `DELETE FROM ${t} WHERE ${cIn('comment_id')}`);
+        }
+        await run(db, `UPDATE knowledge_items SET source_comment_id = NULL WHERE ${cIn('source_comment_id')}`);
+        await run(db, `UPDATE comments SET parent_comment_id = NULL, thread_root_id = NULL WHERE ${cIn('id')}`);
+        await run(db, `DELETE FROM comments WHERE ${cIn('id')}`);
+      }
+      const posts = (await all<{ id: number }>(db, `SELECT id FROM posts WHERE ${accIn}`)).map((p) => p.id);
+      if (posts.length) {
+        await run(db, `UPDATE anomaly_events SET related_post_id = NULL WHERE ${sqlIn('related_post_id', posts)}`);
+        await run(db, `UPDATE comment_groups SET post_id = NULL WHERE ${sqlIn('post_id', posts)}`);
+        await run(db, `DELETE FROM posts WHERE ${sqlIn('id', posts)}`);
+      }
+      if (accounts.length) await run(db, `DELETE FROM social_accounts WHERE ${sqlIn('id', accounts.map((a) => a.id))}`);
+      let knowledge = 0;
+      if (input.removeKnowledge) {
+        const items = (await all<{ id: number }>(db, 'SELECT id FROM knowledge_items WHERE brand_id = ?', [input.brandId])).map((k) => k.id);
+        if (items.length) {
+          await run(db, `DELETE FROM knowledge_revisions WHERE ${sqlIn('knowledge_id', items)}`);
+          await run(db, `DELETE FROM knowledge_items WHERE ${sqlIn('id', items)}`);
+        }
+        await run(db, "UPDATE brand_category_settings SET tone_note = '', extra_keywords = '[]' WHERE brand_id = ?", [input.brandId]);
+        knowledge = items.length;
+      }
+      const summary = { accounts: accounts.length, posts: posts.length, comments: comments.length, knowledge };
+      await audit(db, {
+        actorType: 'user',
+        actorUserId: user.id,
+        brandId: input.brandId,
+        action: 'mock.clear_brand',
+        targetType: 'brand',
+        targetId: input.brandId,
+        summary: `${user.name} 清除「${brand.name}」的示範資料：${accounts.length} 個示範帳號、${posts.length} 篇貼文、${comments.length} 則留言${input.removeKnowledge ? `、${knowledge} 則知識` : ''}`,
+        detail: summary,
+      });
+      return summary;
+    });
+    res.json(result);
+  });
+
   return r;
 }

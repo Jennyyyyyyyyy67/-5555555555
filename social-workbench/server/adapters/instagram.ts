@@ -32,6 +32,7 @@ function toIncoming(c: ig.IgComment, mediaId: string, parentId: string | null): 
 }
 
 /** 最近一次同步的統計（排查「IG 有留言但 API 沒回傳」用） */
+const lastComplete = new Map<number, string[]>();
 export const lastInstagramStats = new Map<number, { media: number; countedComments: number; returnedTopLevel: number }>();
 
 export function createInstagramAdapter(mock: PlatformAdapter): PlatformAdapter {
@@ -72,7 +73,10 @@ export function createInstagramAdapter(mock: PlatformAdapter): PlatformAdapter {
       const [media, me] = await Promise.all([ig.listMedia(token, 25), ig.getOwnIdentity(token).catch(() => null)]);
       const ownIds = new Set([a.externalId, ...(me?.ids ?? [])]);
       const ownName = (me?.username ?? '').toLowerCase();
-      const lists = await Promise.all(media.map((m) => ig.listComments(token, m.id).then((cs) => ({ m, cs }))));
+      const lists = await Promise.all(media.map((m) => ig.listCommentsPaged(token, m.id).then((r) => ({ m, cs: r.data, complete: r.complete }))));
+      // 防呆：平台回傳的留言數明顯少於貼文顯示的留言數（例如權限不足被隱藏），就不用來判斷刪除
+      const returned = (l: { cs: ig.IgComment[] }) => l.cs.reduce((n, c) => n + 1 + (c.replies?.data?.length ?? 0), 0);
+      lastComplete.set(a.id, lists.filter((l) => l.complete && returned(l) >= (l.m.comments_count ?? 0) * 0.8).map((l) => l.m.id));
       lastInstagramStats.set(a.id, {
         media: media.length,
         countedComments: media.reduce((n, m) => n + (m.comments_count ?? 0), 0),
@@ -107,6 +111,10 @@ export function createInstagramAdapter(mock: PlatformAdapter): PlatformAdapter {
       }
       // 舊的在前，被回覆的留言會先寫入
       return out.sort((x, y) => x.occurredAt.localeCompare(y.occurredAt));
+    },
+
+    completePostIds(a) {
+      return live(a) ? (lastComplete.get(a.id) ?? []) : [];
     },
 
     async replyToComment(a, target, body) {

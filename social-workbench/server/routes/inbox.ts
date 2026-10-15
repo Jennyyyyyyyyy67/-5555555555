@@ -23,6 +23,7 @@ import { nowIso } from '../lib/clock';
 import { needsKnowledge } from '../ai/knowledge';
 import { adapterAccountFor } from '../services/credentials';
 import { checkReply } from '../ai/compose';
+import { markDeleted } from '../services/pipeline';
 import { can } from '../../shared/permissions';
 import {
   COMMENT_STATUSES,
@@ -414,7 +415,14 @@ export async function deliverReply(db: DB, user: AuthUser, scope: BrandScope, co
   const sent = adapter
     ? await adapter.replyToComment(await adapterAccountFor(db, account), { externalId: c.external_id, postExternalId: post.external_id }, input.body)
     : ({ ok: false, error: '找不到平台 adapter' } as const);
-  if (!sent.ok) throw new HttpError(502, 'platform_error', `平台回覆失敗：${sent.error}。請稍後再試。`);
+  if (!sent.ok) {
+    // 平台找不到這則留言：通常是留言者已經刪除，直接標示已刪除，不用再處理
+    if (/does not exist|cannot be loaded|Unsupported post request/i.test(sent.error)) {
+      await markDeleted(db, c.brand_id, c);
+      throw new HttpError(410, 'comment_deleted', '這則留言已經在平台上被刪除，無法回覆；已標示為「已刪除」，不需要再處理。');
+    }
+    throw new HttpError(502, 'platform_error', `平台回覆失敗：${sent.error}。請稍後再試。`);
+  }
 
   await tx(db, async () => {
     const fresh = await loadComment(db, scope, c.id);

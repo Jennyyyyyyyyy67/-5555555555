@@ -73,6 +73,11 @@ export interface PlatformAdapter {
   fetchPosts?(account: AdapterAccount): Promise<IncomingPost[]>;
   /** 取得某時間點之後的新留言 */
   fetchComments(account: AdapterAccount, opts: { since?: string | null }): Promise<IncomingComment[]>;
+  /**
+   * 上一次 fetchComments 中「完整取回所有留言」的貼文 externalId。
+   * 這些貼文底下沒出現的留言，代表已在平台上被刪除（只有真實平台實作）。
+   */
+  completePostIds?(account: AdapterAccount): string[];
   /** 在平台上回覆留言 */
   replyToComment(account: AdapterAccount, target: CommentTarget, body: string): Promise<AdapterResult<{ externalReplyId: string }>>;
   /** 執行互動動作（按讚、隱藏、刪除、封鎖…）；平台不支援的動作會回傳 ok:false */

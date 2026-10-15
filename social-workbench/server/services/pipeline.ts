@@ -634,6 +634,50 @@ async function reconcileExisting(db: DB, ctx: Context, connectedAt: string, inco
   );
 }
 
+/** 已在平台上被刪除的留言：完整取回的貼文底下沒有出現的留言，標示為已刪除並結束處理 */
+async function markDeletedOnPlatform(db: DB, ctx: Context, completePostExternalIds: string[], incoming: IncomingComment[]): Promise<void> {
+  if (completePostExternalIds.length === 0) return;
+  const seen = new Set(incoming.map((i) => i.externalId));
+  const rows = await all<{ id: number; external_id: string; status: string; post_external_id: string }>(
+    db,
+    `SELECT c.id, c.external_id, c.status, p.external_id AS post_external_id FROM comments c JOIN posts p ON p.id = c.post_id
+     WHERE c.social_account_id = ? AND c.visibility <> 'deleted'`,
+    [ctx.account.id],
+  );
+  const now = nowIso();
+  for (const r of rows) {
+    if (seen.has(r.external_id) || !completePostExternalIds.includes(r.post_external_id)) continue;
+    await markDeleted(db, ctx.brand.id, r, now);
+  }
+}
+
+/** 標示留言已在平台上被刪除（回覆時平台回傳找不到留言也會呼叫） */
+export async function markDeleted(db: DB, brandId: number, r: { id: number; status: string }, now = nowIso()): Promise<void> {
+  const open = ['pending', 'in_progress', 'transferred'].includes(r.status);
+  await tx(db, async () => {
+    await updateById(db, 'comments', r.id, {
+      visibility: 'deleted',
+      status: open ? 'no_action' : undefined,
+      completed_at: open ? now : undefined,
+      locked_by_id: null,
+      locked_at: null,
+      lock_expires_at: null,
+      updated_at: now,
+    });
+    await audit(db, {
+      actorType: 'system',
+      brandId,
+      commentId: r.id,
+      action: 'comment.deleted_on_platform',
+      targetType: 'comment',
+      targetId: r.id,
+      summary: `留言已在平台上被刪除${open ? '，不需要再處理' : ''}`,
+      before: { status: r.status },
+      after: { visibility: 'deleted', status: open ? 'no_action' : r.status },
+    });
+  });
+}
+
 const isUniqueViolation = (e: unknown) => (e as { code?: string })?.code === '23505';
 
 export async function syncAccount(db: DB, accountId: number): Promise<PipelineResult[]> {
@@ -731,7 +775,10 @@ export async function syncAccountDetailed(db: DB, accountId: number, opts: { bud
     }
     known.add(item.externalId);
   }
-  if (cred) await reconcileExisting(db, ctx, cred.connected_at, incoming, known);
+  if (cred) {
+    await reconcileExisting(db, ctx, cred.connected_at, incoming, known);
+    await markDeletedOnPlatform(db, ctx, adapter.completePostIds?.(acct) ?? [], incoming);
+  }
   await run(db, 'UPDATE social_accounts SET last_synced_at = ?, status = ? WHERE id = ?', [nowIso(), 'connected', accountId]);
   return { fetched: incoming.length, remaining, skippedOwn, newPosts, newComments: results.length, autoReplied: results.filter((r) => r.decision === 'auto_replied').length, results };
 }

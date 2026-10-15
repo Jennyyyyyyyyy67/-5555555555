@@ -238,6 +238,27 @@ describe('Instagram 真實帳號串接', () => {
     expect(x?.first_response_at).not.toBeNull();
   });
 
+  it('留言在 IG 上被刪除：同步後標示已刪除、不再待處理；回覆時平台找不到留言也會標示', async () => {
+    const ctx = await createTestContext();
+    const ig = fakeInstagram();
+    ig.comments.push({ id: 'c-del', text: '你知道綠豆跌倒會變什麼嗎', timestamp: ago(30), username: 'fan_y', from: { id: 'u-y', username: 'fan_y' } });
+    ig.comments.push({ id: 'c-del2', text: '高雄有幾個人', timestamp: ago(20), username: 'fan_z', from: { id: 'u-z', username: 'fan_z' } });
+    const { admin } = await connect(ctx);
+    const acc = (await get<{ id: number }>(ctx.db, "SELECT id FROM social_accounts WHERE platform = 'instagram' AND external_id = ?", [IG_USER]))!;
+    ig.comments.splice(0, 1); // c-del 被留言者刪除
+    expect((await admin.post(`/api/integrations/sync/${acc.id}`)).status).toBe(200);
+    const del = await get<{ visibility: string; status: string }>(ctx.db, "SELECT visibility, status FROM comments WHERE external_id = 'c-del'");
+    expect(del).toMatchObject({ visibility: 'deleted', status: 'no_action' });
+    expect(await get(ctx.db, "SELECT id FROM audit_logs WHERE action = 'comment.deleted_on_platform'")).toBeTruthy();
+
+    // 回覆時平台回傳找不到留言
+    setInstagramFetch(async () => new Response(JSON.stringify({ error: { message: "Unsupported post request. Object with ID 'c-del2' does not exist", code: 100 } }), { status: 400 }));
+    const c2 = (await get<{ id: number }>(ctx.db, "SELECT id FROM comments WHERE external_id = 'c-del2'"))!;
+    const res = await admin.post(`/api/comments/${c2.id}/reply`).send({ body: '謝謝留言', statusAfter: 'done' });
+    expect(res.status).toBe(410);
+    expect(await get(ctx.db, 'SELECT visibility, status FROM comments WHERE id = ?', [c2.id])).toMatchObject({ visibility: 'deleted', status: 'no_action' });
+  });
+
   it('Webhook：驗證權杖、檢查簽章、收到通知後同步', async () => {
     const ctx = await createTestContext();
     const ig = fakeInstagram();

@@ -166,9 +166,20 @@ export interface IgComment {
 }
 
 export async function listComments(token: string, mediaId: string): Promise<IgComment[]> {
+  return (await listCommentsPaged(token, mediaId)).data;
+}
+
+/** 取得貼文的所有留言（最多 10 頁）；complete 代表確實取完，可以用來判斷哪些留言已在平台上被刪除 */
+export async function listCommentsPaged(token: string, mediaId: string, maxPages = 10): Promise<{ data: IgComment[]; complete: boolean }> {
   const fields = 'id,text,timestamp,username,from,like_count,replies{id,text,timestamp,username,from,parent_id}';
-  const r = await call<{ data: IgComment[] }>(graph(`${mediaId}/comments`, { fields, limit: '50', access_token: token }));
-  return r.data ?? [];
+  let url: string | undefined = graph(`${mediaId}/comments`, { fields, limit: '50', access_token: token });
+  const data: IgComment[] = [];
+  for (let page = 0; url && page < maxPages; page++) {
+    const r: { data?: IgComment[]; paging?: { next?: string } } = await call(url);
+    data.push(...(r.data ?? []));
+    url = r.paging?.next;
+  }
+  return { data, complete: !url };
 }
 
 /** 某則留言底下的回覆（巢狀查詢有時不回傳作者，需要另外查） */

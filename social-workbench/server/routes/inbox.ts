@@ -37,6 +37,7 @@ import {
 import {
   INBOX_TABS,
   type AiSummary,
+  type ReplyWarning,
   type AuditLogEntry,
   type CommentDetail,
   type InboxItem,
@@ -379,6 +380,103 @@ async function claimIfUnassigned(db: DB, c: CommentRow, user: AuthUser, reason: 
   return true;
 }
 
+export interface DeliverInput {
+  body: string;
+  statusAfter: 'waiting' | 'done';
+  suggestionId?: number | null;
+  /** 已由呼叫端檢查並經人工確認的提醒 */
+  warnings: ReplyWarning[];
+  /** 批次回覆：同一批的編號與數量（每則仍各自留下回覆與操作紀錄） */
+  batch?: { id: string; size: number };
+}
+
+/** 送出一則人工回覆（單則與批次共用）：平台送出 → 回覆紀錄 → 狀態、首回時間 → 操作紀錄 */
+export async function deliverReply(db: DB, user: AuthUser, scope: BrandScope, commentId: number, input: DeliverInput): Promise<void> {
+  const c = await loadComment(db, scope, commentId);
+  await assertNotLockedByOther(db, c, user);
+  if (c.visibility === 'deleted') throw badRequest('這則留言已刪除，無法回覆');
+  const account = (await get<{ id: number; brand_id: number; platform: string; account_type: string; external_id: string; name: string }>(
+    db,
+    'SELECT id, brand_id, platform, account_type, external_id, name FROM social_accounts WHERE id = ?',
+    [c.social_account_id],
+  ))!;
+  if (!getAccountType(account.platform, account.account_type)?.capabilities.reply) throw badRequest('此平台帳號不支援回覆');
+  const warnings = input.warnings;
+  // 批次只處理還沒回覆的留言，避免同一批重送造成重複回覆
+  if (input.batch && !['pending', 'in_progress', 'transferred'].includes(c.status)) throw badRequest(`這則留言目前是「${STATUS_LABELS[c.status]}」，已經回覆或處理過`);
+  const suggestion = input.suggestionId
+    ? await get<{ id: number; body: string; comment_id: number }>(db, 'SELECT id, body, comment_id FROM ai_suggestions WHERE id = ?', [input.suggestionId])
+    : undefined;
+  if (input.suggestionId && (!suggestion || suggestion.comment_id !== c.id)) throw badRequest('找不到這則 AI 建議，請重新產生');
+  const edited = suggestion ? suggestion.body.trim() !== input.body.trim() : false;
+  const post = (await get<{ external_id: string }>(db, 'SELECT external_id FROM posts WHERE id = ?', [c.post_id]))!;
+  const adapter = getAdapter(account.platform);
+  const sent = adapter
+    ? await adapter.replyToComment(await adapterAccountFor(db, account), { externalId: c.external_id, postExternalId: post.external_id }, input.body)
+    : ({ ok: false, error: '找不到平台 adapter' } as const);
+  if (!sent.ok) throw new HttpError(502, 'platform_error', `平台回覆失敗：${sent.error}。請稍後再試。`);
+
+  await tx(db, async () => {
+    const fresh = await loadComment(db, scope, c.id);
+    await assertNotLockedByOther(db, fresh, user);
+    const now = nowIso();
+    const replyId = await insert(db, 'replies', {
+      comment_id: c.id,
+      brand_id: c.brand_id,
+      body: input.body,
+      source: suggestion ? (edited ? 'ai_edited' : 'ai_adopted') : 'manual',
+      ai_suggestion_id: suggestion?.id ?? null,
+      ai_original_body: suggestion?.body ?? null,
+      was_edited: edited,
+      sent_by_id: user.id,
+      status_after: input.statusAfter,
+      platform_reply_id: sent.externalReplyId,
+      delivery_status: 'sent',
+      sent_at: now,
+      created_at: now,
+    });
+    const slaRow = await get<{ sla_due_at: string | null }>(db, 'SELECT sla_due_at FROM comments WHERE id = ?', [c.id]);
+    const first = !fresh.first_response_at;
+    await updateById(db, 'comments', c.id, {
+      status: input.statusAfter,
+      handled_by_id: user.id,
+      first_response_at: first ? now : undefined,
+      first_response_type: first ? 'human' : undefined,
+      first_response_by_id: first ? user.id : undefined,
+      completed_at: input.statusAfter === 'done' ? now : null,
+      locked_by_id: null,
+      locked_at: null,
+      lock_expires_at: null,
+      updated_at: now,
+    });
+    await claimIfUnassigned(db, fresh, user, '回覆時自動認領');
+    if (suggestion) await run(db, 'UPDATE ai_suggestions SET is_adopted = 1 WHERE id = ?', [suggestion.id]);
+    await audit(db, {
+      actorType: 'user',
+      actorUserId: user.id,
+      brandId: c.brand_id,
+      commentId: c.id,
+      action: 'comment.reply',
+      targetType: 'comment',
+      targetId: c.id,
+      assigneeIdAtTime: fresh.assignee_id ?? user.id,
+      summary: `${user.name} ${input.batch ? `批次（${input.batch.size} 則）` : ''}${suggestion ? (edited ? '修改 AI 建議後' : '採用 AI 建議') : ''}回覆留言，狀態改為「${STATUS_LABELS[input.statusAfter]}」${warnings.length ? `（已確認 ${warnings.length} 項提醒）` : ''}`,
+      before: { status: fresh.status },
+      after: { status: input.statusAfter },
+      detail: {
+        replyId,
+        body: input.body,
+        firstResponse: first,
+        slaMet: first && slaRow?.sla_due_at ? now <= slaRow.sla_due_at : null,
+        source: suggestion ? (edited ? 'ai_edited' : 'ai_adopted') : 'manual',
+        suggestionId: suggestion?.id ?? null,
+        confirmedWarnings: warnings.length ? warnings.map((w) => w.message) : undefined,
+        batchId: input.batch?.id,
+        batchSize: input.batch?.size,
+      },
+    });
+  });
+}
 
 export function inboxRoutes(): Router {
   const r = Router();
@@ -585,89 +683,12 @@ export function inboxRoutes(): Router {
     const input = replySchema.parse(req.body);
     const db = req.db;
     const c = await loadComment(db, scope, Number(req.params.id));
-    await assertNotLockedByOther(db, c, user);
-    if (c.visibility === 'deleted') throw badRequest('這則留言已刪除，無法回覆');
-    const account = (await get<{ id: number; brand_id: number; platform: string; account_type: string; external_id: string; name: string }>(
-      db,
-      'SELECT id, brand_id, platform, account_type, external_id, name FROM social_accounts WHERE id = ?',
-      [c.social_account_id],
-    ))!;
-    if (!getAccountType(account.platform, account.account_type)?.capabilities.reply) throw badRequest('此平台帳號不支援回覆');
     // 送出前檢查：禁用詞一定要改；其他提醒（承諾、查無根據的金額日期）需人工確認後才送出
     const warnings = await checkReply(db, c.brand_id, input.body);
     const blocking = warnings.filter((w) => w.level === 'block');
     if (blocking.length) throw new HttpError(422, 'reply_blocked', blocking.map((w) => w.message).join('；'), { warnings });
     if (warnings.length && !input.confirmWarnings) throw new HttpError(422, 'reply_warnings', '送出前請確認以下提醒', { warnings });
-    const suggestion = input.suggestionId
-      ? await get<{ id: number; body: string; comment_id: number }>(db, 'SELECT id, body, comment_id FROM ai_suggestions WHERE id = ?', [input.suggestionId])
-      : undefined;
-    if (input.suggestionId && (!suggestion || suggestion.comment_id !== c.id)) throw badRequest('找不到這則 AI 建議，請重新產生');
-    const edited = suggestion ? suggestion.body.trim() !== input.body.trim() : false;
-    const post = (await get<{ external_id: string }>(db, 'SELECT external_id FROM posts WHERE id = ?', [c.post_id]))!;
-    const adapter = getAdapter(account.platform);
-    const sent = adapter
-      ? await adapter.replyToComment(await adapterAccountFor(db, account), { externalId: c.external_id, postExternalId: post.external_id }, input.body)
-      : ({ ok: false, error: '找不到平台 adapter' } as const);
-    if (!sent.ok) throw new HttpError(502, 'platform_error', `平台回覆失敗：${sent.error}。請稍後再試。`);
-
-    await tx(db, async () => {
-      const fresh = await loadComment(db, scope, c.id);
-      await assertNotLockedByOther(db, fresh, user);
-      const now = nowIso();
-      const replyId = await insert(db, 'replies', {
-        comment_id: c.id,
-        brand_id: c.brand_id,
-        body: input.body,
-        source: suggestion ? (edited ? 'ai_edited' : 'ai_adopted') : 'manual',
-        ai_suggestion_id: suggestion?.id ?? null,
-        ai_original_body: suggestion?.body ?? null,
-        was_edited: edited,
-        sent_by_id: user.id,
-        status_after: input.statusAfter,
-        platform_reply_id: sent.externalReplyId,
-        delivery_status: 'sent',
-        sent_at: now,
-        created_at: now,
-      });
-      const slaRow = await get<{ sla_due_at: string | null }>(db, 'SELECT sla_due_at FROM comments WHERE id = ?', [c.id]);
-      const first = !fresh.first_response_at;
-      await updateById(db, 'comments', c.id, {
-        status: input.statusAfter,
-        handled_by_id: user.id,
-        first_response_at: first ? now : undefined,
-        first_response_type: first ? 'human' : undefined,
-        first_response_by_id: first ? user.id : undefined,
-        completed_at: input.statusAfter === 'done' ? now : null,
-        locked_by_id: null,
-        locked_at: null,
-        lock_expires_at: null,
-        updated_at: now,
-      });
-      await claimIfUnassigned(db, fresh, user, '回覆時自動認領');
-      if (suggestion) await run(db, 'UPDATE ai_suggestions SET is_adopted = 1 WHERE id = ?', [suggestion.id]);
-      await audit(db, {
-        actorType: 'user',
-        actorUserId: user.id,
-        brandId: c.brand_id,
-        commentId: c.id,
-        action: 'comment.reply',
-        targetType: 'comment',
-        targetId: c.id,
-        assigneeIdAtTime: fresh.assignee_id ?? user.id,
-        summary: `${user.name} ${suggestion ? (edited ? '修改 AI 建議後' : '採用 AI 建議') : ''}回覆留言，狀態改為「${STATUS_LABELS[input.statusAfter]}」${warnings.length ? `（已確認 ${warnings.length} 項提醒）` : ''}`,
-        before: { status: fresh.status },
-        after: { status: input.statusAfter },
-        detail: {
-          replyId,
-          body: input.body,
-          firstResponse: first,
-          slaMet: first && slaRow?.sla_due_at ? now <= slaRow.sla_due_at : null,
-          source: suggestion ? (edited ? 'ai_edited' : 'ai_adopted') : 'manual',
-          suggestionId: suggestion?.id ?? null,
-          confirmedWarnings: warnings.length ? warnings.map((w) => w.message) : undefined,
-        },
-      });
-    });
+    await deliverReply(db, user, scope, c.id, { body: input.body, statusAfter: input.statusAfter, suggestionId: input.suggestionId ?? null, warnings });
     res.status(201).json(await buildDetail(db, user, scope, c.id));
   });
 

@@ -534,7 +534,7 @@ export interface SimulateCommentInput {
 }
 
 // ---------- 自動回覆 ----------
-export type AutomationAction = 'auto_reply' | 'auto_like';
+export type AutomationAction = 'auto_reply' | 'auto_like' | 'force_human';
 export type RuleMatchType = 'category' | 'keyword';
 
 export interface AutomationRule {
@@ -552,6 +552,11 @@ export interface AutomationRule {
   replyTemplate: string;
   platforms: string[];
   minConfidence: number;
+  /** 轉人工規則：提升為高優先 */
+  raisePriority: boolean;
+  /** 轉人工規則：直接指派的負責人 */
+  assigneeId: number | null;
+  assigneeName: string | null;
   isActive: boolean;
   sortOrder: number;
   /** 近 7 天實際觸發次數 */
@@ -571,6 +576,8 @@ export interface AutomationRuleInput {
   replyTemplate?: string;
   platforms: string[];
   minConfidence: number;
+  raisePriority?: boolean;
+  assigneeId?: number | null;
   isActive: boolean;
 }
 export type AutomationRulePatch = Partial<Omit<AutomationRuleInput, 'brandId'>>;
@@ -578,6 +585,8 @@ export type AutomationRulePatch = Partial<Omit<AutomationRuleInput, 'brandId'>>;
 export interface AutomationMeta {
   /** 可設定自動回覆的類型（低風險、不需事實知識） */
   autoReplyCategories: string[];
+  /** 其中需要知識庫有答案才會自動回覆的類型 */
+  knowledgeAutoCategories: string[];
   /** 可設定自動按讚的類型 */
   autoLikeCategories: string[];
   minConfidenceFloor: number;
@@ -869,4 +878,100 @@ export interface SignupInput {
 export interface AuthConfigResponse {
   signupEnabled: boolean;
   demoMode: boolean;
+}
+
+// ---------- 階段 4：相似留言分組與批次處理 ----------
+export interface GroupComment {
+  id: number;
+  authorName: string;
+  body: string;
+  occurredAt: string;
+  status: CommentStatus;
+  priority: Priority | null;
+  slaDueAt: string | null;
+  firstResponseAt: string | null;
+  categoryName: string | null;
+  assigneeName: string | null;
+  /** 別人正在處理（鎖定中） */
+  lockedByName: string | null;
+}
+
+export interface CommentGroup {
+  key: string;
+  intentKey: string;
+  label: string;
+  /** false：只能批次標記（例如垃圾訊息），不批次回覆 */
+  replyable: boolean;
+  brandId: number;
+  brandName: string;
+  brandColor: string;
+  postId: number;
+  postTitle: string;
+  contentType: ContentType;
+  isAd: boolean;
+  platform: string;
+  accountName: string;
+  /** 組內最早到期的時效 */
+  earliestDueAt: string | null;
+  comments: GroupComment[];
+}
+
+export interface CommentGroupsResponse {
+  groups: CommentGroup[];
+  /** 需要個別處理、沒有放進任何組的待處理留言數（客訴、退款、敏感、風險等） */
+  individualCount: number;
+  serverTime: string;
+}
+
+export interface BatchSuggestInput {
+  commentIds: number[];
+  /** 回覆版本（親切、簡潔…）；預設品牌第一個啟用的版本 */
+  variantKey?: string;
+}
+
+export interface BatchDraft {
+  commentId: number;
+  authorName: string;
+  commentBody: string;
+  suggestionId: number;
+  body: string;
+  warnings: ReplyWarning[];
+}
+
+export interface BatchSuggestResponse {
+  batchId: string;
+  variantKey: string;
+  variants: Array<{ key: string; label: string }>;
+  knowledgeGap: boolean;
+  hits: KnowledgeHit[];
+  notes: string[];
+  drafts: BatchDraft[];
+  /** 無法放進這批的留言與原因 */
+  skipped: Array<{ commentId: number; reason: string }>;
+}
+
+export interface BatchReplyInput {
+  batchId?: string;
+  statusAfter: 'waiting' | 'done';
+  confirmWarnings?: boolean;
+  items: Array<{ commentId: number; body: string; suggestionId?: number | null }>;
+}
+
+export interface BatchItemResult {
+  commentId: number;
+  ok: boolean;
+  error?: string;
+}
+
+export interface BatchResult {
+  batchId: string;
+  results: BatchItemResult[];
+  succeeded: number;
+  failed: number;
+}
+
+export interface BatchStatusInput {
+  commentIds: number[];
+  status: 'no_action' | 'done';
+  reason?: string;
 }

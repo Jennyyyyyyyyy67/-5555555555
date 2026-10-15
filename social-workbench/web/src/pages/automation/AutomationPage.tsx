@@ -41,10 +41,12 @@ import type {
   AutomationRulesResponse,
   SimulatePostOption,
   SimulateResult,
+  UserDirectoryEntry,
 } from '../../../../shared/types';
 import './automation.css';
 
-const ACTION_LABELS: Record<AutomationAction, string> = { auto_reply: '自動回覆', auto_like: '自動按讚' };
+const ACTION_LABELS: Record<AutomationAction, string> = { auto_reply: '自動回覆', auto_like: '自動按讚', force_human: '轉人工' };
+type RuleKind = 'keyword' | 'category' | 'force_human';
 type Tab = 'rules' | 'test' | 'recent';
 
 const EXAMPLES: Array<{ label: string; body: string }> = [
@@ -178,7 +180,8 @@ function RulesTab({
           ))}
         </ul>
         <p className="muted small" style={{ marginTop: 10 }}>
-          自動回覆目前只開放「稱讚」「一般互動」這類不需要事實資訊的留言。產品、價格等問題需要知識庫（階段 3）才能可靠回答，在那之前都由人工處理。
+          自動回覆開放「稱讚」「一般互動」，以及產品、價格、購買、使用方式的詢問；詢問類只有在知識庫找得到答案、且回覆通過送出前檢查時才會自動送出，否則交給人工。
+          品牌也可以新增「轉人工」規則，例如留言提到「律師」「消保官」就一律交給人工、提升為高優先並指派負責人。
         </p>
       </Card>
 
@@ -256,11 +259,19 @@ function RuleRow({
       <div className="am-rule-main">
         <div className="row-wrap">
           <strong>{rule.name}</strong>
-          <Badge tone={rule.action === 'auto_reply' ? 'purple' : 'blue'}>{rule.matchType === 'keyword' ? '關鍵字回覆' : ACTION_LABELS[rule.action]}</Badge>
+          <Badge tone={rule.action === 'force_human' ? 'orange' : rule.action === 'auto_reply' ? 'purple' : 'blue'}>
+            {rule.action === 'force_human' ? '轉人工' : rule.matchType === 'keyword' ? '關鍵字回覆' : ACTION_LABELS[rule.action]}
+          </Badge>
           {!rule.isActive && <Badge>已停用</Badge>}
         </div>
         {rule.description && <p className="muted small">{rule.description}</p>}
-        {rule.matchType === 'keyword' && <p className="small am-template">自動回覆：{rule.replyTemplate}</p>}
+        {rule.matchType === 'keyword' && rule.action === 'auto_reply' && <p className="small am-template">自動回覆：{rule.replyTemplate}</p>}
+        {rule.action === 'force_human' && (
+          <p className="small am-template">
+            一律交給人工{rule.raisePriority ? '・提升為高優先' : ''}
+            {rule.assigneeId ? `・指派給 ${rule.assigneeName ?? '（人員已停用）'}` : ''}
+          </p>
+        )}
         <div className="am-rule-meta small">
           {rule.matchType === 'keyword' ? (
             <span>關鍵字：{rule.keywords.join('、')}</span>
@@ -272,7 +283,7 @@ function RuleRow({
             {rule.platforms.length === 0 ? '全部' : rule.platforms.map((p) => <PlatformIcon key={p} platform={p} size={16} />)}
             {rule.platforms.length > 0 && <span className="sr-only">{rule.platforms.map(platformLabel).join('、')}</span>}
           </span>
-          {rule.matchType !== 'keyword' && <span>AI 信心 ≥ {formatPercent(rule.minConfidence)}</span>}
+          {rule.matchType !== 'keyword' && rule.action !== 'force_human' && <span>AI 信心 ≥ {formatPercent(rule.minConfidence)}</span>}
           <span>近 7 天執行 {rule.firedLast7Days} 次</span>
           <span className="muted" title={formatDateTime(rule.updatedAt)}>
             {rule.updatedByName ? `${rule.updatedByName} ` : ''}更新於 {formatRelative(rule.updatedAt)}
@@ -321,13 +332,21 @@ function RuleModal({
     replyTemplate: rule?.replyTemplate ?? '',
     platforms: rule?.platforms ?? [],
     minConfidence: rule?.minConfidence ?? am.minConfidenceFloor,
+    raisePriority: rule?.raisePriority ?? true,
+    assigneeId: rule?.assigneeId ?? null,
     isActive: rule?.isActive ?? true,
   }));
+  const [kind, setKind] = useState<RuleKind>(() => (rule?.action === 'force_human' ? 'force_human' : (rule?.matchType ?? 'keyword')));
+  const [forceMatch, setForceMatch] = useState<'keyword' | 'category'>(() => (rule?.action === 'force_human' ? rule.matchType : 'keyword'));
+  const directory = useQuery(
+    () => (kind === 'force_human' && form.brandId ? api.get<UserDirectoryEntry[]>('/users/directory', { brand: form.brandId }) : Promise.resolve([] as UserDirectoryEntry[])),
+    [kind, form.brandId],
+  );
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [kwText, setKwText] = useState(() => (rule?.keywords ?? []).join('、'));
-  const isKeyword = form.matchType === 'keyword';
-  const allowed = form.action === 'auto_reply' ? am.autoReplyCategories : am.autoLikeCategories;
+  const isKeyword = kind === 'keyword' || (kind === 'force_human' && forceMatch === 'keyword');
+  const allowed = kind === 'force_human' ? (meta?.categories ?? []).map((c) => c.key) : form.action === 'auto_like' ? am.autoLikeCategories : am.autoReplyCategories;
   const categories = (meta?.categories ?? []).filter((c) => c.isActive);
   const set = <K extends keyof AutomationRuleInput>(k: K, v: AutomationRuleInput[K]) => setForm((f) => ({ ...f, [k]: v }));
 
@@ -338,12 +357,17 @@ function RuleModal({
     const cats = form.categories.filter((c) => allowed.includes(c));
     if (isKeyword) {
       if (keywords.length === 0) return setError('請至少輸入一個關鍵字');
-      if (!form.replyTemplate?.trim()) return setError('請輸入要自動回覆的內容');
+      if (kind === 'keyword' && !form.replyTemplate?.trim()) return setError('請輸入要自動回覆的內容');
     } else if (cats.length === 0) return setError('請至少選擇一種留言類型');
     setSaving(true);
     setError(null);
     try {
-      const body = isKeyword ? { ...form, action: 'auto_reply' as const, keywords, categories: [] } : { ...form, categories: cats };
+      const body: AutomationRuleInput =
+        kind === 'force_human'
+          ? { ...form, action: 'force_human', matchType: forceMatch, keywords: isKeyword ? keywords : [], categories: isKeyword ? [] : cats, replyTemplate: '' }
+          : kind === 'keyword'
+            ? { ...form, action: 'auto_reply', matchType: 'keyword', keywords, categories: [] }
+            : { ...form, action: form.action === 'force_human' ? 'auto_reply' : form.action, matchType: 'category', categories: cats };
       if (rule) {
         const { brandId: _b, ...patch } = body;
         await api.patch(`/automation/rules/${rule.id}`, patch);
@@ -395,24 +419,83 @@ function RuleModal({
         <Field label="說明" hint="給團隊看的備註，例如為什麼開啟這條規則">
           <Textarea rows={2} value={form.description} maxLength={300} onChange={(e) => set('description', e.target.value)} />
         </Field>
-        <Field label="觸發方式" required>
-          <div className="am-choice">
-            {(['keyword', 'category'] as const).map((m) => (
-              <label key={m} className={`am-choice-card ${form.matchType === m ? 'active' : ''}`}>
-                <input type="radio" name="matchType" checked={form.matchType === m} onChange={() => set('matchType', m)} />
+        <Field label="規則類型" required>
+          <div className="am-choice am-choice-3">
+            {(['keyword', 'category', 'force_human'] as const).map((m) => (
+              <label key={m} className={`am-choice-card ${kind === m ? 'active' : ''}`}>
+                <input
+                  type="radio"
+                  name="kind"
+                  checked={kind === m}
+                  disabled={!!rule && (rule.action === 'force_human') !== (m === 'force_human')}
+                  onChange={() => {
+                    setKind(m);
+                    if (m !== 'force_human') set('matchType', m);
+                  }}
+                />
                 <span>
-                  <strong>{m === 'keyword' ? '關鍵字＋固定回覆' : 'AI 依留言類型回覆'}</strong>
+                  <strong>{m === 'keyword' ? '關鍵字＋固定回覆' : m === 'category' ? 'AI 依留言類型回覆' : '一律轉人工'}</strong>
                   <span className="muted small" style={{ display: 'block' }}>
                     {m === 'keyword'
                       ? '留言包含指定的字（例如「價格」「+1」），就自動回覆你寫好的內容。'
-                      : 'AI 判斷留言類型（例如稱讚），依品牌風格產生回覆或按讚。'}
+                      : m === 'category'
+                        ? 'AI 判斷留言類型（例如稱讚、知識庫有答案的詢價），依品牌風格產生回覆或按讚。'
+                        : '符合條件的留言不自動處理，直接交給人工，可提升優先級並指派負責人。'}
                   </span>
                 </span>
               </label>
             ))}
           </div>
         </Field>
-        {isKeyword && (
+        {kind === 'force_human' && (
+          <>
+            <Field label="依什麼判斷" required>
+              <div className="row-wrap">
+                {(['keyword', 'category'] as const).map((m) => (
+                  <label key={m} className="checkbox">
+                    <input type="radio" name="forceMatch" checked={forceMatch === m} onChange={() => setForceMatch(m)} />
+                    <span>{m === 'keyword' ? '留言包含關鍵字' : 'AI 判斷的留言類型'}</span>
+                  </label>
+                ))}
+              </div>
+            </Field>
+            {forceMatch === 'keyword' && (
+              <Field label="關鍵字" required hint="用「、」或逗號分隔；留言包含任一個字就會轉人工。">
+                <TextInput value={kwText} onChange={(e) => setKwText(e.target.value)} placeholder="例如：律師、消保官、報警、媒體、過敏" />
+              </Field>
+            )}
+            {forceMatch === 'category' && (
+              <Field label="適用的留言類型" required>
+                <div className="am-check-grid">
+                  {categories.map((c) => (
+                    <Checkbox
+                      key={c.key}
+                      label={c.name}
+                      checked={form.categories.includes(c.key)}
+                      onChange={(v) => set('categories', v ? [...form.categories, c.key] : form.categories.filter((k) => k !== c.key))}
+                    />
+                  ))}
+                </div>
+              </Field>
+            )}
+            <div className="form-row">
+              <Field label="優先級">
+                <Switch label={form.raisePriority ? '提升為高優先' : '維持 AI 判斷的優先級'} checked={!!form.raisePriority} onChange={(v) => set('raisePriority', v)} />
+              </Field>
+              <Field label="指派負責人" hint="選擇後會直接指派並通知這位人員。">
+                <Select value={form.assigneeId ?? ''} onChange={(e) => set('assigneeId', e.target.value ? Number(e.target.value) : null)}>
+                  <option value="">不指派（進入共用待辦）</option>
+                  {(directory.data ?? []).map((u) => (
+                    <option key={u.id} value={u.id}>
+                      {u.name}
+                    </option>
+                  ))}
+                </Select>
+              </Field>
+            </div>
+          </>
+        )}
+        {kind === 'keyword' && (
           <>
             <Field label="關鍵字" required hint="用「、」或逗號分隔；留言包含任一個字就會觸發（英文不分大小寫）。">
               <TextInput value={kwText} onChange={(e) => setKwText(e.target.value)} placeholder="例如：價格、多少錢、+1、怎麼買" />
@@ -428,13 +511,13 @@ function RuleModal({
             </Field>
           </>
         )}
-        {!isKeyword && (
+        {kind === 'category' && (
         <>
         <Field label="動作" required>
           <div className="am-choice">
             {(['auto_reply', 'auto_like'] as AutomationAction[]).map((a) => (
-              <label key={a} className={`am-choice-card ${form.action === a ? 'active' : ''}`}>
-                <input type="radio" name="action" checked={form.action === a} onChange={() => set('action', a)} />
+              <label key={a} className={`am-choice-card ${form.action === a || (a === 'auto_reply' && form.action === 'force_human') ? 'active' : ''}`}>
+                <input type="radio" name="action" checked={form.action === a || (a === 'auto_reply' && form.action === 'force_human')} onChange={() => set('action', a)} />
                 <span>
                   <strong>{ACTION_LABELS[a]}</strong>
                   <span className="muted small" style={{ display: 'block' }}>
@@ -445,14 +528,14 @@ function RuleModal({
             ))}
           </div>
         </Field>
-        <Field label="適用的留言類型" required hint="其他類型涉及事實資訊或風險，必須由人工處理，無法設定自動化。">
+        <Field label="適用的留言類型" required hint="標示「需知識庫」的類型，只有知識庫找得到答案、且回覆通過送出前檢查時才會自動回覆。客訴、售後等類型涉及風險，必須由人工處理。">
           <div className="am-check-grid">
             {categories.map((c) => {
               const ok = allowed.includes(c.key);
               return (
                 <span key={c.key} className={ok ? '' : 'am-disabled'} title={ok ? undefined : '此類型不可自動處理'}>
                   <Checkbox
-                    label={c.name}
+                    label={form.action !== 'auto_like' && am.knowledgeAutoCategories.includes(c.key) ? `${c.name}（需知識庫）` : c.name}
                     disabled={!ok}
                     checked={ok && form.categories.includes(c.key)}
                     onChange={(v) => set('categories', v ? [...form.categories, c.key] : form.categories.filter((k) => k !== c.key))}
@@ -477,6 +560,7 @@ function RuleModal({
           </div>
         </Field>
         <div className="form-row">
+          {kind === 'category' ? (
           <Field label={`AI 信心門檻：${formatPercent(form.minConfidence)}`} hint={`最低 ${formatPercent(am.minConfidenceFloor)}；門檻越高，自動處理越保守。`}>
             <input
               type="range"
@@ -487,6 +571,9 @@ function RuleModal({
               onChange={(e) => set('minConfidence', Number(e.target.value))}
             />
           </Field>
+          ) : (
+            <span />
+          )}
           <Field label="狀態">
             <Switch label={form.isActive ? '儲存後立即啟用' : '先不啟用'} checked={form.isActive} onChange={(v) => set('isActive', v)} />
           </Field>
@@ -576,6 +663,7 @@ function TestTab() {
         </div>
       </Card>
       <SimulateCard />
+      <BurstCard />
     </div>
   );
 }
@@ -684,6 +772,90 @@ function SimulateCard() {
           )}
         </div>
       )}
+    </Card>
+  );
+}
+
+const BURST_KINDS: Array<{ key: string; label: string }> = [
+  { key: 'price', label: '大家都在問價格' },
+  { key: 'buy', label: '大家都在問怎麼買' },
+  { key: 'interest', label: '一堆 +1、想要' },
+  { key: 'praise', label: '大量稱讚' },
+  { key: 'mixed', label: '詢價中夾帶一則客訴' },
+];
+
+function BurstCard() {
+  const { brandParam } = useBrandScope();
+  const posts = useQuery(() => api.get<SimulatePostOption[]>('/automation/posts', { brand: brandParam }), [brandParam]);
+  const [postId, setPostId] = useState<number | ''>('');
+  const [kind, setKind] = useState('price');
+  const [count, setCount] = useState(6);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [done, setDone] = useState<{ created: number; autoReplied: number; human: number } | null>(null);
+
+  const submit = async () => {
+    if (!postId) return setError('請選擇要湧入留言的貼文');
+    setBusy(true);
+    setError(null);
+    try {
+      setDone(await api.post('/automation/simulate-burst', { postId, kind, count }));
+    } catch (err) {
+      setError(errorMessage(err));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Card title="模擬大量留言" className="am-test-card">
+      <p className="muted small" style={{ marginBottom: 12 }}>
+        模擬一篇貼文短時間湧入很多相似留言，用來測試「相似留言」的分組與批次回覆。每則留言都會走完整的處理流程。
+      </p>
+      <div className="stack">
+        <Field label="貼文">
+          <Select value={postId} onChange={(e) => setPostId(e.target.value ? Number(e.target.value) : '')}>
+            <option value="">請選擇貼文、廣告或影片</option>
+            {(posts.data ?? []).map((p) => (
+              <option key={p.id} value={p.id}>
+                {`${p.brandName}・${p.accountName}｜${p.title}`}
+              </option>
+            ))}
+          </Select>
+        </Field>
+        <div className="form-row">
+          <Field label="情境">
+            <Select value={kind} onChange={(e) => setKind(e.target.value)}>
+              {BURST_KINDS.map((k) => (
+                <option key={k.key} value={k.key}>
+                  {k.label}
+                </option>
+              ))}
+            </Select>
+          </Field>
+          <Field label="留言數">
+            <Select value={count} onChange={(e) => setCount(Number(e.target.value))}>
+              {[3, 6, 10, 15].map((n) => (
+                <option key={n} value={n}>
+                  {n} 則
+                </option>
+              ))}
+            </Select>
+          </Field>
+        </div>
+        {error && <Alert tone="danger">{error}</Alert>}
+        <div>
+          <Button variant="primary" loading={busy} onClick={() => void submit()}>
+            送出模擬留言
+          </Button>
+        </div>
+        {done && (
+          <Alert tone="success">
+            已收到 {done.created} 則留言：自動回覆 {done.autoReplied} 則、交給人工 {done.human} 則。
+            <Link to="/batch"> 到「相似留言」批次處理 →</Link>
+          </Alert>
+        )}
+      </div>
     </Card>
   );
 }

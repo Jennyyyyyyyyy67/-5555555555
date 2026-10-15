@@ -60,11 +60,12 @@ describe('自動回覆規則 API', () => {
     expect(logs).toHaveLength(1);
   });
 
-  it('自動回覆不可設定在客訴、價格等類型', async () => {
+  it('自動回覆不可設定在客訴、售後等類型；價格詢問可以（但要知識庫有答案才會送出）', async () => {
     const ctx = await createTestContext();
     const res = await createRule(ctx, { categories: ['complaint'] });
     expect(res.status).toBe(400);
-    expect((await createRule(ctx, { categories: ['price_inquiry'] })).status).toBe(400);
+    expect((await createRule(ctx, { categories: ['after_sales'] })).status).toBe(400);
+    expect((await createRule(ctx, { categories: ['price_inquiry'] })).status).toBe(201);
   });
 
   it('信心門檻不可低於系統下限', async () => {

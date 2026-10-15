@@ -15,6 +15,7 @@ import { integrationRoutes, webhookRoutes } from './integrations';
 import { knowledgeRoutes } from './knowledge';
 import { signupRoutes } from './signup';
 import { styleRoutes } from './style';
+import { batchRoutes } from './batch';
 
 /** 所有 API 路由。除了 /auth 之外都需要登入；更細的角色與品牌權限由各路由自行檢查。 */
 export function apiRouter(): Router {
@@ -35,6 +36,7 @@ export function apiRouter(): Router {
   r.use('/comments', requireAuth(), commentRoutes());
   r.use('/audit', requireAuth(), auditRoutes());
   r.use('/automation', requireAuth(), automationRoutes());
+  r.use('/batch', requireAuth(), batchRoutes());
   r.use('/notifications', requireAuth(), notificationRoutes());
   return r;
 }

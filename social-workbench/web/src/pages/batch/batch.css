@@ -1,0 +1,143 @@
+.bt-layout {
+  display: grid;
+  grid-template-columns: minmax(260px, 340px) 1fr;
+  gap: 16px;
+  align-items: start;
+  margin-top: 12px;
+}
+.bt-groups {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.bt-group {
+  width: 100%;
+  text-align: left;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  cursor: pointer;
+  box-shadow: var(--shadow-sm);
+  font: inherit;
+  color: inherit;
+}
+.bt-group:hover {
+  border-color: var(--border-strong);
+}
+.bt-group.active {
+  border-color: var(--primary);
+  background: var(--primary-weak);
+}
+.bt-group-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.bt-group-head strong {
+  flex: 1;
+  min-width: 0;
+}
+.bt-ellipsis {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+  max-width: 100%;
+}
+.bt-panel-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.bt-panel-title h2 {
+  margin: 0;
+}
+.bt-back {
+  display: none;
+}
+.bt-comments,
+.bt-drafts {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+.bt-comments li {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border);
+}
+.bt-comments li:last-child,
+.bt-drafts li:last-child {
+  border-bottom: none;
+}
+.bt-comments li.locked {
+  opacity: 0.6;
+}
+.bt-comment-main {
+  flex: 1;
+  min-width: 0;
+}
+.bt-comment-main p {
+  margin: 4px 0 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.bt-drafts li {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 12px;
+  border-bottom: 1px solid var(--border);
+}
+.bt-drafts li.off {
+  opacity: 0.55;
+}
+.bt-warnings {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  color: var(--warning-text);
+}
+.bt-warnings li.block {
+  color: var(--danger-text);
+}
+.bt-fail {
+  margin: 4px 0 0;
+  padding-left: 18px;
+}
+.bt-knowledge ul {
+  margin: 6px 0 0;
+  padding-left: 18px;
+}
+.bt-send {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding-top: 4px;
+  border-top: 1px solid var(--border);
+}
+@media (max-width: 860px) {
+  .bt-layout {
+    grid-template-columns: 1fr;
+  }
+  .bt-layout.has-selected .bt-groups {
+    display: none;
+  }
+  .bt-layout:not(.has-selected) .bt-panel {
+    display: none;
+  }
+  .bt-back {
+    display: inline-flex;
+  }
+}

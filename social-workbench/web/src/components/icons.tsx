@@ -149,6 +149,12 @@ export const IconBook = (p: IconProps) => (
   </Svg>
 );
 
+export const IconLayers = (p: IconProps) => (
+  <Svg {...p}>
+    <path d="M12 3l9 5-9 5-9-5zM3 13l9 5 9-5M3 17.5l9 5 9-5" />
+  </Svg>
+);
+
 export const IconSparkle = (p: IconProps) => (
   <Svg {...p}>
     <path d="M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8zM19 15l.8 2.2L22 18l-2.2.8L19 21l-.8-2.2L16 18l2.2-.8z" />

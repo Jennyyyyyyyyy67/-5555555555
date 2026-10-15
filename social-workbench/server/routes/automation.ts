@@ -9,7 +9,8 @@ import { addMinutes, nowIso } from '../lib/clock';
 import { getAdapter, listAdapters } from '../adapters/registry';
 import { decide, KEYWORD_BLOCKING_CODES, mockFeed, parseConditions, syncAccount, type PipelineResult } from '../services/pipeline';
 import { loadFullStyle } from '../ai/compose';
-import { FORCE_HUMAN_RULES, MIN_AUTO_CONFIDENCE, AUTO_REPLY_ALLOWED_CATEGORIES } from '../ai/safety';
+import { FORCE_HUMAN_RULES, MIN_AUTO_CONFIDENCE, AUTO_REPLY_ALLOWED_CATEGORIES, KNOWLEDGE_AUTO_CATEGORIES } from '../ai/safety';
+import { brandDirectory } from '../services/comments';
 import type {
   AutomationDecision,
   AutomationMeta,
@@ -21,8 +22,21 @@ import type {
 
 const AUTO_LIKE_CATEGORIES = ['praise', 'no_reply', 'general'];
 
+type BurstKind = 'price' | 'buy' | 'interest' | 'praise' | 'mixed';
+/** 模擬大量留言的情境（mixed 夾帶一則客訴，用來確認客訴不會被放進批次） */
+export const BURST_TEMPLATES: Record<BurstKind, string[]> = {
+  price: ['多少錢？', '請問價格', '售價多少呢', '一組多少？', '價格？', '想問多少錢', '怎麼賣', '價錢多少～'],
+  buy: ['哪裡買得到？', '怎麼買', '請問在哪買', '有賣場連結嗎', '門市有賣嗎', '要怎麼下單'],
+  interest: ['+1', '+1 想要', '我要', '求連結', '想要！', '+1+1'],
+  praise: ['好棒！', '好喜歡', '太美了', '推推', '支持！', '超讚的'],
+  mixed: ['多少錢？', '請問價格', '售價多少呢', '上次買的用一個月就壞了，品質到底怎樣', '一組多少？', '價格？'],
+};
+export const BURST_LABELS: Record<BurstKind, string> = { price: '詢問價格', buy: '詢問購買方式', interest: '+1／想要', praise: '稱讚', mixed: '詢價夾帶客訴' };
+const BURST_NAMES = ['小雨', '阿凱', 'Momo', '佳佳', 'Ken', '小芳', '大衛', 'Yuki', '阿哲', '小安', 'Lulu', '志明'];
+
 export const AUTOMATION_META: AutomationMeta = {
-  autoReplyCategories: [...AUTO_REPLY_ALLOWED_CATEGORIES],
+  autoReplyCategories: [...AUTO_REPLY_ALLOWED_CATEGORIES, ...KNOWLEDGE_AUTO_CATEGORIES],
+  knowledgeAutoCategories: [...KNOWLEDGE_AUTO_CATEGORIES],
   autoLikeCategories: AUTO_LIKE_CATEGORIES,
   minConfidenceFloor: MIN_AUTO_CONFIDENCE,
   keywordBlockingCodes: KEYWORD_BLOCKING_CODES,
@@ -35,7 +49,7 @@ interface RuleListRow {
   brand_name: string;
   name: string;
   description: string;
-  action: 'auto_reply' | 'auto_like';
+  action: AutomationRule['action'];
   conditions: string;
   is_active: number;
   sort_order: number;
@@ -59,6 +73,9 @@ function toRule(r: RuleListRow): AutomationRule {
     replyTemplate: c.replyTemplate,
     platforms: c.platforms,
     minConfidence: c.minConfidence,
+    raisePriority: c.raisePriority,
+    assigneeId: c.assigneeId,
+    assigneeName: null,
     isActive: r.is_active === 1,
     sortOrder: r.sort_order,
     firedLast7Days: r.fired,
@@ -73,24 +90,32 @@ async function loadRules(db: DB, where: string, params: unknown[] = []): Promise
     db,
     `SELECT r.id, r.brand_id, b.name AS brand_name, r.name, r.description, r.action, r.conditions, r.is_active, r.sort_order,
        r.updated_at, u.name AS updated_by_name,
-       (SELECT COUNT(*) FROM audit_logs a WHERE a.rule_id = r.id AND a.action IN ('comment.auto_reply', 'comment.auto_like') AND a.created_at >= ?) AS fired
+       (SELECT COUNT(*) FROM audit_logs a WHERE a.rule_id = r.id AND a.action IN ('comment.auto_reply', 'comment.auto_like', 'comment.force_human') AND a.created_at >= ?) AS fired
      FROM automation_rules r JOIN brands b ON b.id = r.brand_id LEFT JOIN users u ON u.id = r.updated_by_id
      WHERE ${where} ORDER BY r.brand_id, r.sort_order, r.id`,
     [since, ...params],
   );
-  return rows.map(toRule);
+  const rules = rows.map(toRule);
+  const ids = [...new Set(rules.map((r) => r.assigneeId).filter((x): x is number => !!x))];
+  if (ids.length) {
+    const names = await all<{ id: number; name: string }>(db, `SELECT id, name FROM users WHERE ${sqlIn('id', ids)}`);
+    for (const r of rules) r.assigneeName = names.find((n) => n.id === r.assigneeId)?.name ?? null;
+  }
+  return rules;
 }
 
 const ruleFields = {
   name: z.string().trim().min(1, '請輸入規則名稱').max(60, '規則名稱最多 60 個字'),
   description: z.string().trim().max(300, '說明最多 300 個字').optional(),
-  action: z.enum(['auto_reply', 'auto_like'], { errorMap: () => ({ message: '請選擇自動化動作' }) }),
+  action: z.enum(['auto_reply', 'auto_like', 'force_human'], { errorMap: () => ({ message: '請選擇自動化動作' }) }),
   matchType: z.enum(['category', 'keyword']).default('category'),
   categories: z.array(z.string()).default([]),
   keywords: z.array(z.string().trim().min(1).max(40, '每個關鍵字最多 40 個字')).max(30, '關鍵字最多 30 個').default([]),
   replyTemplate: z.string().trim().max(1000, '回覆內容最多 1000 個字').default(''),
   platforms: z.array(z.string()).default([]),
   minConfidence: z.number({ invalid_type_error: '信心門檻格式不正確' }).min(MIN_AUTO_CONFIDENCE, `信心門檻不可低於 ${Math.round(MIN_AUTO_CONFIDENCE * 100)}%`).max(1, '信心門檻最高 100%'),
+  raisePriority: z.boolean().default(true),
+  assigneeId: z.number().int().positive().nullable().default(null),
   isActive: z.boolean().default(true),
 };
 const createSchema = z.object({ brandId: z.number().int().positive('請選擇品牌'), ...ruleFields });
@@ -102,11 +127,22 @@ const patchSchema = z
 async function validateRule(
   db: DB,
   brandId: number,
-  r: { action: 'auto_reply' | 'auto_like'; matchType: 'category' | 'keyword'; categories: string[]; keywords: string[]; replyTemplate: string; platforms: string[] },
+  r: { action: AutomationRule['action']; matchType: 'category' | 'keyword'; categories: string[]; keywords: string[]; replyTemplate: string; platforms: string[]; assigneeId?: number | null },
 ): Promise<void> {
   const { action, categories, platforms } = r;
   const known = listAdapters().map((a) => a.platform);
   if (platforms.some((p) => !known.includes(p))) throw badRequest('不支援的平台', { field: 'platforms' });
+  if (action === 'force_human') {
+    // 轉人工只會讓處理更保守，任何類型、關鍵字都可以設定
+    if (r.matchType === 'keyword' && r.keywords.length === 0) throw badRequest('請至少輸入一個關鍵字', { field: 'keywords' });
+    if (r.matchType === 'category' && categories.length === 0) throw badRequest('請至少選擇一種留言類型', { field: 'categories' });
+    const cats = await all<{ key: string }>(db, 'SELECT key FROM comment_categories');
+    if (categories.some((c) => !cats.some((x) => x.key === c))) throw badRequest('留言類型不存在', { field: 'categories' });
+    if (r.assigneeId && !(await brandDirectory(db, brandId)).some((u) => u.id === r.assigneeId)) {
+      throw badRequest('指定的負責人沒有這個品牌的權限', { field: 'assigneeId' });
+    }
+    return;
+  }
   if (r.matchType === 'keyword') {
     if (action !== 'auto_reply') throw badRequest('關鍵字規則只能用於自動回覆', { field: 'action' });
     if (r.keywords.length === 0) throw badRequest('請至少輸入一個關鍵字', { field: 'keywords' });
@@ -121,7 +157,7 @@ async function validateRule(
   if (bad.length) {
     throw badRequest(
       action === 'auto_reply'
-        ? '自動回覆只能用於「稱讚」「一般互動」這類低風險留言。其他類型需要知識庫（階段 3）或必須由人工處理。'
+        ? '自動回覆只能用於「稱讚」「一般互動」，以及知識庫有答案的產品、價格、購買、使用方式詢問。客訴、售後等類型必須由人工處理。'
         : '自動按讚只能用於「稱讚」「一般互動」「無需回覆」。',
       { field: 'categories' },
     );
@@ -166,7 +202,7 @@ export function automationRoutes(): Router {
         action: input.action,
         category_ids: [],
         platforms: input.platforms,
-        conditions: { matchType: input.matchType, categories: input.categories, keywords: input.keywords, replyTemplate: input.replyTemplate, platforms: input.platforms, minConfidence: input.minConfidence },
+        conditions: { matchType: input.matchType, categories: input.categories, keywords: input.keywords, replyTemplate: input.replyTemplate, platforms: input.platforms, minConfidence: input.minConfidence, raisePriority: input.raisePriority, assigneeId: input.assigneeId },
         is_active: input.isActive,
         sort_order: (max?.m ?? 0) + 10,
         created_by_id: user.id,
@@ -198,7 +234,7 @@ export function automationRoutes(): Router {
     const next = { ...current, ...Object.fromEntries(Object.entries(input).filter(([, v]) => v !== undefined)) } as AutomationRule;
     await validateRule(req.db, current.brandId, next);
     const diff = diffFields(
-      { name: current.name, description: current.description, action: current.action, matchType: current.matchType, categories: current.categories, keywords: current.keywords, replyTemplate: current.replyTemplate, platforms: current.platforms, minConfidence: current.minConfidence, isActive: current.isActive },
+      { name: current.name, description: current.description, action: current.action, matchType: current.matchType, categories: current.categories, keywords: current.keywords, replyTemplate: current.replyTemplate, platforms: current.platforms, minConfidence: current.minConfidence, raisePriority: current.raisePriority, assigneeId: current.assigneeId, isActive: current.isActive },
       input,
     );
     if (diff) {
@@ -208,7 +244,7 @@ export function automationRoutes(): Router {
           description: next.description,
           action: next.action,
           platforms: next.platforms,
-          conditions: { matchType: next.matchType, categories: next.categories, keywords: next.keywords, replyTemplate: next.replyTemplate, platforms: next.platforms, minConfidence: next.minConfidence },
+          conditions: { matchType: next.matchType, categories: next.categories, keywords: next.keywords, replyTemplate: next.replyTemplate, platforms: next.platforms, minConfidence: next.minConfidence, raisePriority: next.raisePriority, assigneeId: next.assigneeId },
           is_active: next.isActive,
           updated_by_id: user.id,
           updated_at: nowIso(),
@@ -360,6 +396,57 @@ export function automationRoutes(): Router {
     });
     const body: SimulateResult = { ...decisionView(result), commentId: result.commentId, slaMinutes: result.slaMinutes, slaDueAt: result.slaDueAt };
     res.status(201).json(body);
+  });
+
+  // 模擬器：短時間湧入大量相似留言（測試相似留言分組與批次回覆）
+  const burstSchema = z.object({
+    postId: z.number().int().positive('請選擇貼文'),
+    kind: z.enum(Object.keys(BURST_TEMPLATES) as [BurstKind, ...BurstKind[]], { errorMap: () => ({ message: '請選擇留言情境' }) }),
+    count: z.number().int().min(2, '至少 2 則').max(15, '最多 15 則'),
+  });
+  r.post('/simulate-burst', requirePermission('testAutomation'), async (req: Request, res: Response) => {
+    const { user, scope } = authed(req);
+    const input = burstSchema.parse(req.body);
+    const post = await get<{ id: number; brand_id: number; external_id: string; account_id: number; platform: string; account_external_id: string }>(
+      req.db,
+      `SELECT p.id, p.brand_id, p.external_id, sa.id AS account_id, sa.platform, sa.external_id AS account_external_id
+       FROM posts p JOIN social_accounts sa ON sa.id = p.social_account_id WHERE p.id = ?`,
+      [input.postId],
+    );
+    if (!post || !scope.activeBrandIds.includes(post.brand_id)) throw notFound('找不到貼文');
+    if (await get(req.db, 'SELECT 1 AS x FROM account_credentials WHERE account_id = ?', [post.account_id])) {
+      throw badRequest('這是已連結的真實帳號，不能放入模擬留言；請選擇示範帳號的貼文');
+    }
+    const templates = BURST_TEMPLATES[input.kind];
+    const base = Date.now();
+    for (let i = 0; i < input.count; i++) {
+      const name = BURST_NAMES[(base / 1000 + i * 7) % BURST_NAMES.length | 0];
+      mockFeed.push(post.platform, post.account_external_id, {
+        externalId: `sim-${base}-${i}-${Math.floor(Math.random() * 1e6)}`,
+        postExternalId: post.external_id,
+        parentExternalId: null,
+        authorName: `${name}${i + 1}`,
+        authorExternalId: `sim-author-${name}${i + 1}`,
+        body: templates[i % templates.length],
+        rating: null,
+        occurredAt: new Date(base - (input.count - i) * 20_000).toISOString(),
+      });
+    }
+    const results = await syncAccount(req.db, post.account_id);
+    await audit(req.db, {
+      actorType: 'user',
+      actorUserId: user.id,
+      brandId: post.brand_id,
+      action: 'mock.simulate_burst',
+      targetType: 'post',
+      targetId: post.id,
+      summary: `以模擬器送出 ${input.count} 則相似留言（${BURST_LABELS[input.kind]}）`,
+    });
+    res.status(201).json({
+      created: results.filter((x) => x.commentId).length,
+      autoReplied: results.filter((x) => x.decision === 'auto_replied').length,
+      human: results.filter((x) => x.decision === 'human').length,
+    });
   });
 
   // 最近由自動化規則處理的留言（含被安全檢查擋下的）

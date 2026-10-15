@@ -1,6 +1,6 @@
 import type { ReactNode } from 'react';
 import type { Permission } from '../../../shared/permissions';
-import { IconBolt, IconBook, IconSparkle, IconBuilding, IconClock, IconDatabase, IconInbox, IconLink, IconUsers } from '../components/icons';
+import { IconBolt, IconLayers, IconBook, IconSparkle, IconBuilding, IconClock, IconDatabase, IconInbox, IconLink, IconUsers } from '../components/icons';
 
 export interface NavItem {
   to: string;
@@ -18,7 +18,10 @@ export interface NavSection {
 // 側欄選單。只列出已完成的功能，避免堆積用不到的入口。
 export const NAV_SECTIONS: NavSection[] = [
   {
-    items: [{ to: '/inbox', label: '收件匣', icon: <IconInbox /> }],
+    items: [
+      { to: '/inbox', label: '收件匣', icon: <IconInbox /> },
+      { to: '/batch', label: '相似留言', icon: <IconLayers /> },
+    ],
   },
   {
     title: 'AI 與自動化',

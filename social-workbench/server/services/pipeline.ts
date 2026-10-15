@@ -7,7 +7,9 @@ import { getAdapter, getAccountType } from '../adapters/registry';
 import { mockFeed } from '../adapters/mock/mockFeed';
 import { mockProvider } from '../ai/mockProvider';
 import type { AIProvider, Analysis, BrandStyle } from '../ai/types';
-import { forceHumanReasons, MIN_AUTO_CONFIDENCE, type ForceHumanReason } from '../ai/safety';
+import { forceHumanReasons, KNOWLEDGE_AUTO_CATEGORIES, MIN_AUTO_CONFIDENCE, type ForceHumanReason } from '../ai/safety';
+import { checkReply, composeVariants, loadFullStyle } from '../ai/compose';
+import { brandDirectory, notify } from './comments';
 import { badRequest, HttpError, notFound } from '../lib/errors';
 import { needsKnowledge, searchKnowledge } from '../ai/knowledge';
 import { adapterAccountFor } from './credentials';
@@ -29,13 +31,19 @@ export interface RuleConditions {
   platforms: string[];
   /** 最低 AI 信心（不得低於系統下限） */
   minConfidence: number;
+  /** 轉人工規則：提升為高優先 */
+  raisePriority: boolean;
+  /** 轉人工規則：直接指派給這位人員（null 代表不指派） */
+  assigneeId: number | null;
 }
+
+export type RuleAction = 'auto_reply' | 'auto_like' | 'force_human';
 
 export interface RuleRow {
   id: number;
   brand_id: number;
   name: string;
-  action: 'auto_reply' | 'auto_like';
+  action: RuleAction;
   conditions: string;
   is_active: number;
   sort_order: number;
@@ -44,10 +52,12 @@ export interface RuleRow {
 export interface RuleMatch {
   ruleId: number;
   ruleName: string;
-  action: 'auto_reply' | 'auto_like';
+  action: RuleAction;
   matchType?: 'category' | 'keyword';
   matchedKeyword?: string;
   replyTemplate?: string;
+  raisePriority?: boolean;
+  assigneeId?: number | null;
 }
 
 /** 關鍵字規則由業主寫好回覆內容，不需要 AI 知識；但客訴、退款、敏感、承諾、風險仍一律轉人工 */
@@ -86,6 +96,8 @@ export function parseConditions(text: string): RuleConditions {
     categories: Array.isArray(c.categories) ? c.categories : [],
     platforms: Array.isArray(c.platforms) ? c.platforms : [],
     minConfidence: Math.max(MIN_AUTO_CONFIDENCE, Number(c.minConfidence ?? MIN_AUTO_CONFIDENCE)),
+    raisePriority: c.raisePriority !== false,
+    assigneeId: typeof c.assigneeId === 'number' ? c.assigneeId : null,
   };
 }
 
@@ -114,8 +126,19 @@ async function findRule(db: DB, brandId: number, platform: string, a: Analysis, 
     'SELECT id, brand_id, name, action, conditions, is_active, sort_order FROM automation_rules WHERE brand_id = ? AND is_active = 1 ORDER BY sort_order, id',
     [brandId],
   );
-  // 關鍵字規則優先（業主明確指定的情境）
   const text = body.toLowerCase();
+  // 轉人工規則最優先：品牌指定的情境（例如提到「律師」「消保官」）一律交給人工
+  for (const r of rules) {
+    if (r.action !== 'force_human') continue;
+    const c = parseConditions(r.conditions);
+    if (c.platforms.length && !c.platforms.includes(platform)) continue;
+    const base = { ruleId: r.id, ruleName: r.name, action: 'force_human' as const, matchType: c.matchType, raisePriority: c.raisePriority, assigneeId: c.assigneeId };
+    if (c.matchType === 'keyword') {
+      const kw = c.keywords.find((k) => text.includes(k.trim().toLowerCase()));
+      if (kw) return { ...base, matchedKeyword: kw };
+    } else if (c.categories.includes(a.categoryKey)) return base;
+  }
+  // 關鍵字規則優先（業主明確指定的情境）
   for (const r of rules) {
     if (r.action !== 'auto_reply') continue;
     const c = parseConditions(r.conditions);
@@ -159,6 +182,10 @@ export async function decide(
   let explanation: string;
   if (!matchedRule) {
     explanation = result_reason(analysis.categoryKey, forceHuman.length > 0);
+  } else if (matchedRule.action === 'force_human') {
+    const why = matchedRule.matchedKeyword ? `留言包含「${matchedRule.matchedKeyword}」` : `留言類型為「${cat?.name ?? analysis.categoryKey}」`;
+    forceHuman.push({ code: 'brand_rule', label: `品牌規則「${matchedRule.ruleName}」：${why}` });
+    explanation = `${why}，符合轉人工規則「${matchedRule.ruleName}」，交給人工處理${matchedRule.raisePriority ? '並提升為高優先' : ''}。`;
   } else if (matchedRule.action === 'auto_reply' && matchedRule.matchType === 'keyword') {
     const blocking = forceHuman.filter((r) => KEYWORD_BLOCKING_CODES.includes(r.code));
     if (analysis.categoryKey === 'spam' || analysis.categoryKey === 'malicious') {
@@ -177,6 +204,33 @@ export async function decide(
       explanation = `符合規則「${matchedRule.ruleName}」，但因安全檢查轉人工：${forceHuman.map((r) => r.label).join('；')}。`;
     } else if (!caps?.reply) {
       explanation = `符合規則「${matchedRule.ruleName}」，但此平台不支援回覆，交給人工處理。`;
+    } else if ((KNOWLEDGE_AUTO_CATEGORIES as readonly string[]).includes(analysis.categoryKey)) {
+      // 知識庫有答案的詢問：回覆內容直接引用知識，並通過送出前檢查才自動送出
+      const style = await loadFullStyle(db, input.brandId);
+      const variants = composeVariants({
+        body: input.body,
+        categoryKey: analysis.categoryKey,
+        riskFlags: analysis.riskFlags,
+        sentiment: analysis.sentiment,
+        brandName: input.brandName,
+        style,
+        hits: knowledge.hits,
+        needsKnowledge: knowledge.needsKnowledge,
+        seed: input.seed,
+      });
+      const v = variants.find((x) => x.key === 'friendly') ?? variants.find((x) => x.key !== 'lively') ?? variants[0];
+      const warnings = v && v.knowledgeIds.length ? await checkReply(db, input.brandId, v.body, style) : null;
+      if (!v || !v.knowledgeIds.length) {
+        forceHuman.push({ code: 'knowledge_gap', label: '找不到可靠知識（需要事實資訊的問題）' });
+        explanation = `符合規則「${matchedRule.ruleName}」，但找不到可以引用的知識，交給人工處理。`;
+      } else if (warnings!.length) {
+        forceHuman.push({ code: 'unchecked_reply', label: `AI 產生的回覆含有需要人工確認的內容：${warnings!.map((w) => w.message).join('；')}` });
+        explanation = `符合規則「${matchedRule.ruleName}」，但產生的回覆需要人工確認，交給人工處理。`;
+      } else {
+        decision = 'auto_replied';
+        replyBody = v.body;
+        explanation = `符合規則「${matchedRule.ruleName}」，知識庫有可引用的答案且通過送出前檢查，AI 已自動回覆。`;
+      }
     } else {
       decision = 'auto_replied';
       replyBody = await ai.generateSimpleReply({
@@ -253,7 +307,10 @@ export async function processIncoming(
     : undefined;
   const slaMinutes = setting && setting.sla_enabled === 1 && setting.sla_minutes ? setting.sla_minutes : null;
   const slaDueAt = slaMinutes ? addMinutes(c.occurredAt, slaMinutes) : null;
-  const critical = result.forceHuman.some((r) => ['sensitive', 'complaint', 'refund', 'promise', 'risk'].includes(r.code));
+  const forced = result.matchedRule?.action === 'force_human' ? result.matchedRule : null;
+  const critical = !!forced || result.forceHuman.some((r) => ['sensitive', 'complaint', 'refund', 'promise', 'risk'].includes(r.code));
+  // 轉人工規則指定的負責人必須是這個品牌的有效人員
+  const forcedAssignee = forced?.assigneeId ? (await brandDirectory(db, ctx.brand.id)).find((u) => u.id === forced.assigneeId) ?? null : null;
   const knowledgeGap = result.knowledge.needsKnowledge && result.knowledge.hits.length === 0;
 
   let threadRootId: number | null = null;
@@ -279,7 +336,9 @@ export async function processIncoming(
       occurred_at: c.occurredAt,
       fetched_at: now,
       status: a.categoryKey === 'no_reply' ? 'pending' : 'pending',
-      priority: a.priority,
+      priority: forced?.raisePriority ? 'high' : a.priority,
+      assignee_id: forcedAssignee?.id ?? null,
+      original_assignee_id: forcedAssignee?.id ?? null,
       category_id: category?.id ?? null,
       tags: a.tags,
       risk_flags: a.riskFlags,
@@ -386,6 +445,22 @@ export async function processIncoming(
         targetId: commentId,
         summary: `自動化規則「${result.matchedRule.ruleName}」自動按讚`,
       });
+    } else if (forced) {
+      await audit(db, {
+        actorType: 'rule',
+        ruleId: forced.ruleId,
+        brandId: ctx.brand.id,
+        commentId,
+        action: 'comment.force_human',
+        targetType: 'comment',
+        targetId: commentId,
+        summary: `轉人工規則「${forced.ruleName}」：交給人工處理${forced.raisePriority ? '，提升為高優先' : ''}${forcedAssignee ? `，指派給 ${forcedAssignee.name}` : ''}`,
+        after: { priority: forced.raisePriority ? 'high' : a.priority, assigneeId: forcedAssignee?.id ?? null },
+        detail: { forceHuman: result.forceHuman, matchedKeyword: forced.matchedKeyword ?? null },
+      });
+      if (forcedAssignee) {
+        await notify(db, { userId: forcedAssignee.id, brandId: ctx.brand.id, type: 'assigned', commentId, message: `轉人工規則「${forced.ruleName}」指派一則留言給你：${c.body.slice(0, 40)}` });
+      }
     } else if (result.matchedRule) {
       await audit(db, {
         actorType: 'rule',

@@ -65,6 +65,29 @@ export default function InboxPage() {
     const t = setInterval(() => void load({ silent: true }), 30_000);
     return () => clearInterval(t);
   }, [load]);
+  // 已連結真實平台（Instagram）的帳號：收件匣開著時每 45 秒向平台抓一次新留言，抓完再更新列表
+  useEffect(() => {
+    let alive = true;
+    let running = false;
+    const sync = async () => {
+      if (running) return;
+      running = true;
+      try {
+        const r = await api.post<{ synced: number; newComments: number }>(`/integrations/auto-sync?brand=${encodeURIComponent(brandParam)}`);
+        if (alive && r.newComments > 0) void load({ silent: true });
+      } catch {
+        /* 同步失敗不影響收件匣 */
+      } finally {
+        running = false;
+      }
+    };
+    void sync();
+    const t = setInterval(() => void sync(), 45_000);
+    return () => {
+      alive = false;
+      clearInterval(t);
+    };
+  }, [brandParam, load]);
   // 搜尋輸入防抖
   useEffect(() => {
     const t = setTimeout(() => {

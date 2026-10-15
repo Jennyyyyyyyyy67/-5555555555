@@ -23,7 +23,6 @@ import { nowIso } from '../lib/clock';
 import { needsKnowledge } from '../ai/knowledge';
 import { adapterAccountFor } from '../services/credentials';
 import { checkReply } from '../ai/compose';
-import { autoSyncLive } from '../services/liveSync';
 import { can } from '../../shared/permissions';
 import {
   COMMENT_STATUSES,
@@ -392,8 +391,6 @@ export function inboxRoutes(): Router {
     await releaseExpiredLocks(req.db, brandIds);
     const now = nowIso();
 
-    // 已連結真實平台（例如 Instagram）的帳號：每隔一段時間自動抓新留言
-    await autoSyncLive(req.db, brandIds);
     const tab = (qs(req.query.tab, '分頁') ?? 'todo') as InboxTab;
     if (!(INBOX_TABS as readonly string[]).includes(tab)) throw badRequest('分頁參數不正確');
     const where = [sqlIn('c.brand_id', brandIds), TAB_WHERE[tab]];

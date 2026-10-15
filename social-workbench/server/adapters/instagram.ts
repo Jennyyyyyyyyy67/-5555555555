@@ -78,7 +78,8 @@ export function createInstagramAdapter(mock: PlatformAdapter): PlatformAdapter {
       });
       for (const { m, cs } of lists) {
         for (const c of cs) {
-          out.push(toIncoming(c, m.id, null));
+          const own = (r: ig.IgComment) => r.from?.id === a.externalId;
+          out.push({ ...toIncoming(c, m.id, null), hasOwnReply: (c.replies?.data ?? []).some(own) });
           for (const r of c.replies?.data ?? []) out.push(toIncoming(r, m.id, r.parent_id ?? c.id));
         }
       }

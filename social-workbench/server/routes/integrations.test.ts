@@ -160,6 +160,27 @@ describe('Instagram 真實帳號串接', () => {
     expect(logs.map((l) => l.action).sort()).toEqual(['account.connect', 'comment.auto_reply']);
   });
 
+  it('IG 上已經有本帳號回覆的留言，不會再自動回覆（避免重複回覆）', async () => {
+    const ctx = await createTestContext();
+    const ig = fakeInstagram();
+    const admin0 = await ctx.loginAs('admin');
+    await admin0.post('/api/automation/rules').send({
+      brandId: ctx.fx.brandA, name: 'kw', action: 'auto_reply', matchType: 'keyword', keywords: ['價格'],
+      replyTemplate: '已私訊你囉', categories: [], platforms: [], minConfidence: 0.85, isActive: true,
+    });
+    const { admin } = await connect(ctx);
+    const acct = await get<{ id: number }>(ctx.db, "SELECT id FROM social_accounts WHERE platform = 'instagram'");
+    const later = new Date(Date.now() + 1000).toISOString();
+    ig.comments.push({
+      id: 'c-dup', text: '請問價格', timestamp: later, username: 'buyer', from: { id: 'u-b', username: 'buyer' },
+      replies: { data: [{ id: 'r-old', text: '已私訊你囉', timestamp: later, username: 'shop_tw', from: { id: IG_USER, username: 'shop_tw' }, parent_id: 'c-dup' }] },
+    });
+    const s1 = await admin.post(`/api/integrations/sync/${acct!.id}`);
+    expect(s1.body.newComments).toBe(1);
+    expect(s1.body.autoReplied).toBe(0);
+    expect(ig.replies).toHaveLength(0);
+  });
+
   it('Webhook：驗證權杖、檢查簽章、收到通知後同步', async () => {
     const ctx = await createTestContext();
     const ig = fakeInstagram();

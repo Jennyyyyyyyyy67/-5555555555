@@ -6,7 +6,8 @@ import { all, get, insert, run, sqlIn, tx, updateById } from '../db';
 import { authed, parseCookies, requireAuth, requirePermission } from '../auth/middleware';
 import { audit } from '../services/audit';
 import { saveCredential } from '../services/credentials';
-import { safeSync, syncByPlatformUser } from '../services/liveSync';
+import { autoSyncLive, safeSync, syncByPlatformUser } from '../services/liveSync';
+import { resolveBrandFilter } from '../auth/scope';
 import { adapterKeyFor } from '../adapters/registry';
 import { badRequest, notFound } from '../lib/errors';
 import { nowIso } from '../lib/clock';
@@ -175,6 +176,12 @@ export function integrationRoutes(): Router {
       });
     });
     res.status(204).end();
+  });
+
+  // 收件匣開著時定期呼叫：同步已連結真實平台、且一段時間沒同步的帳號
+  r.post('/auto-sync', requireAuth(), async (req: Request, res: Response) => {
+    const { scope } = authed(req);
+    res.json(await autoSyncLive(req.db, resolveBrandFilter(scope, req.query.brand).filter((id) => scope.activeBrandIds.includes(id))));
   });
 
   // 立即同步（任何可處理留言的人都可以）

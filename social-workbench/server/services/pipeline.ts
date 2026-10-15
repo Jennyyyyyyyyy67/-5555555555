@@ -264,7 +264,7 @@ export async function processIncoming(
     threadRootId = parent.thread_root_id ?? parent.id;
   }
 
-  return tx(db, async () => {
+  const out = await tx(db, async () => {
     const commentId = await insert(db, 'comments', {
       brand_id: ctx.brand.id,
       social_account_id: ctx.account.id,
@@ -358,67 +358,7 @@ export async function processIncoming(
     }
 
     if (result.decision === 'auto_replied' && result.replyBody && result.matchedRule) {
-      const adapter = getAdapter(ctx.account.platform);
-      const sent = adapter
-        ? await adapter.replyToComment(
-            await adapterAccountFor(db, { ...ctx.account, brand_id: ctx.brand.id }),
-            { externalId: c.externalId, postExternalId: '' },
-            result.replyBody,
-          )
-        : { ok: false as const, error: '找不到平台 adapter' };
-      if (!sent.ok) {
-        // 送出失敗就交給人工，不讓留言卡在「已自動處理」
-        result.decision = 'human';
-        result.explanation = `AI 自動回覆送出失敗（${sent.error}），已交給人工處理。`;
-        await audit(db, {
-          actorType: 'rule',
-          ruleId: result.matchedRule.ruleId,
-          brandId: ctx.brand.id,
-          commentId,
-          action: 'comment.auto_reply_failed',
-          targetType: 'comment',
-          targetId: commentId,
-          summary: result.explanation,
-        });
-      } else {
-        const sentAt = nowIso();
-        const replyId = await insert(db, 'replies', {
-          comment_id: commentId,
-          brand_id: ctx.brand.id,
-          body: result.replyBody,
-          source: 'auto_rule',
-          ai_original_body: result.replyBody,
-          was_edited: false,
-          rule_id: result.matchedRule.ruleId,
-          status_after: 'done',
-          platform_reply_id: sent.externalReplyId,
-          delivery_status: 'sent',
-          sent_at: sentAt,
-          created_at: sentAt,
-        });
-        await updateById(db, 'comments', commentId, {
-          status: 'done',
-          is_auto_handled: true,
-          handling_mode: 'ai_auto',
-          first_response_at: sentAt,
-          first_response_type: 'ai_auto',
-          completed_at: sentAt,
-          updated_at: sentAt,
-        });
-        await audit(db, {
-          actorType: 'rule',
-          ruleId: result.matchedRule.ruleId,
-          brandId: ctx.brand.id,
-          commentId,
-          action: 'comment.auto_reply',
-          targetType: 'comment',
-          targetId: commentId,
-          summary: `自動化規則「${result.matchedRule.ruleName}」自動回覆`,
-          after: { status: 'done' },
-          detail: { replyId, body: result.replyBody, confidence: a.confidence },
-          createdAt: sentAt,
-        });
-      }
+      // 自動回覆在交易提交「之後」才送出：留言先存好，就算之後中斷也不會被當成新留言重複回覆
     } else if (result.decision === 'auto_liked' && result.matchedRule) {
       await insert(db, 'comment_actions', {
         comment_id: commentId,
@@ -461,6 +401,78 @@ export async function processIncoming(
     }
 
     return { ...result, commentId, slaMinutes, slaDueAt };
+  });
+  if (out.decision === 'auto_replied' && out.replyBody && out.matchedRule) await sendAutoReply(db, ctx, c.externalId, out);
+  return out;
+}
+
+/** 送出自動回覆並記錄結果（在留言已存入資料庫之後執行） */
+async function sendAutoReply(db: DB, ctx: Context, externalId: string, result: PipelineResult): Promise<void> {
+  const rule = result.matchedRule!;
+  const commentId = result.commentId!;
+  const adapter = getAdapter(ctx.account.platform);
+  let sent: Awaited<ReturnType<NonNullable<typeof adapter>['replyToComment']>>;
+  try {
+    sent = adapter
+      ? await adapter.replyToComment(await adapterAccountFor(db, { ...ctx.account, brand_id: ctx.brand.id }), { externalId, postExternalId: '' }, result.replyBody!)
+      : { ok: false, error: '找不到平台 adapter' };
+  } catch (err) {
+    sent = { ok: false, error: (err as Error).message };
+  }
+  if (!sent.ok) {
+    // 送出失敗就交給人工，不讓留言卡在「已自動處理」
+    result.decision = 'human';
+    result.explanation = `AI 自動回覆送出失敗（${sent.error}），已交給人工處理。`;
+    await audit(db, {
+      actorType: 'rule',
+      ruleId: rule.ruleId,
+      brandId: ctx.brand.id,
+      commentId,
+      action: 'comment.auto_reply_failed',
+      targetType: 'comment',
+      targetId: commentId,
+      summary: result.explanation,
+    });
+    return;
+  }
+  const sentAt = nowIso();
+  await tx(db, async () => {
+    const replyId = await insert(db, 'replies', {
+      comment_id: commentId,
+      brand_id: ctx.brand.id,
+      body: result.replyBody,
+      source: 'auto_rule',
+      ai_original_body: result.replyBody,
+      was_edited: false,
+      rule_id: rule.ruleId,
+      status_after: 'done',
+      platform_reply_id: sent.ok ? sent.externalReplyId : null,
+      delivery_status: 'sent',
+      sent_at: sentAt,
+      created_at: sentAt,
+    });
+    await updateById(db, 'comments', commentId, {
+      status: 'done',
+      is_auto_handled: true,
+      handling_mode: 'ai_auto',
+      first_response_at: sentAt,
+      first_response_type: 'ai_auto',
+      completed_at: sentAt,
+      updated_at: sentAt,
+    });
+    await audit(db, {
+      actorType: 'rule',
+      ruleId: rule.ruleId,
+      brandId: ctx.brand.id,
+      commentId,
+      action: 'comment.auto_reply',
+      targetType: 'comment',
+      targetId: commentId,
+      summary: `自動化規則「${rule.ruleName}」自動回覆`,
+      after: { status: 'done' },
+      detail: { replyId, body: result.replyBody, confidence: result.analysis.confidence },
+      createdAt: sentAt,
+    });
   });
 }
 
@@ -560,7 +572,7 @@ export async function syncAccountDetailed(db: DB, accountId: number, opts: { bud
             rating: item.rating ?? null,
             occurredAt: item.occurredAt,
           },
-          { allowAutomation: !cred || item.occurredAt >= cred.connected_at },
+          { allowAutomation: (!cred || item.occurredAt >= cred.connected_at) && !item.hasOwnReply },
         ),
       );
     } catch (err) {

@@ -32,6 +32,8 @@ export interface IncomingComment {
   rating?: number | null;
   likeCount?: number;
   occurredAt: string;
+  /** 平台上這則留言底下已經有本帳號的回覆（避免重複自動回覆） */
+  hasOwnReply?: boolean;
 }
 
 /** 平台上的貼文／廣告／影片（尚未寫入資料庫的原始格式） */

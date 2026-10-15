@@ -7,10 +7,6 @@ import { syncAccountDetailed, type SyncSummary } from './pipeline';
 /** 收件匣多久自動向平台同步一次 */
 export const AUTO_SYNC_SECONDS = 45;
 
-function withTimeout<T>(p: Promise<T>, ms: number): Promise<T | 'timeout'> {
-  return Promise.race([p, new Promise<'timeout'>((r) => setTimeout(() => r('timeout'), ms))]);
-}
-
 async function safeSync(db: DB, accountId: number): Promise<SyncSummary | null> {
   try {
     return await syncAccountDetailed(db, accountId, { budgetMs: 6_000 });
@@ -21,9 +17,12 @@ async function safeSync(db: DB, accountId: number): Promise<SyncSummary | null> 
   }
 }
 
-/** 同步品牌範圍內、已連結真實平台且超過一段時間沒同步的帳號（最多等 timeoutMs） */
-export async function autoSyncLive(db: DB, brandIds: number[], timeoutMs = 8000): Promise<void> {
-  if (brandIds.length === 0) return;
+/**
+ * 同步品牌範圍內、已連結真實平台且超過一段時間沒同步的帳號。
+ * 一定等同步完成才回應（Vercel 回應後會停止執行，不能留在背景跑），每個帳號以時間預算分批處理。
+ */
+export async function autoSyncLive(db: DB, brandIds: number[]): Promise<{ synced: number; newComments: number }> {
+  if (brandIds.length === 0) return { synced: 0, newComments: 0 };
   const cutoff = new Date(Date.now() - AUTO_SYNC_SECONDS * 1000).toISOString();
   const due = await all<{ id: number }>(
     db,
@@ -31,10 +30,11 @@ export async function autoSyncLive(db: DB, brandIds: number[], timeoutMs = 8000)
      WHERE a.is_active = 1 AND ${sqlIn('a.brand_id', brandIds)} AND (a.last_synced_at IS NULL OR a.last_synced_at < ?)`,
     [cutoff],
   );
-  if (due.length === 0) return;
+  if (due.length === 0) return { synced: 0, newComments: 0 };
   // 先標記時間，避免多個同時的請求重複同步
   await run(db, `UPDATE social_accounts SET last_synced_at = ? WHERE ${sqlIn('id', due.map((d) => d.id))}`, [nowIso()]);
-  await withTimeout(Promise.all(due.map((d) => safeSync(db, d.id))), timeoutMs);
+  const results = await Promise.all(due.map((d) => safeSync(db, d.id)));
+  return { synced: due.length, newComments: results.reduce((n, r) => n + (r?.newComments ?? 0), 0) };
 }
 
 /** Webhook：依平台帳號 id 找到對應帳號並同步（找不到就同步所有已連結的同平台帳號） */

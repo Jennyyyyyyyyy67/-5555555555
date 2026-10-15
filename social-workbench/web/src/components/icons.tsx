@@ -149,6 +149,30 @@ export const IconBook = (p: IconProps) => (
   </Svg>
 );
 
+export const IconChart = (p: IconProps) => (
+  <Svg {...p}>
+    <path d="M4 20V4M4 20h16M8 16v-5M12 16V8M16 16v-3M20 16V6" />
+  </Svg>
+);
+
+export const IconBulb = (p: IconProps) => (
+  <Svg {...p}>
+    <path d="M9 18h6M10 21h4M12 3a6 6 0 00-3.5 10.9c.6.5 1 1.2 1 2.1h5c0-.9.4-1.6 1-2.1A6 6 0 0012 3z" />
+  </Svg>
+);
+
+export const IconReport = (p: IconProps) => (
+  <Svg {...p}>
+    <path d="M7 3h7l5 5v13H7zM14 3v5h5M10 13h6M10 17h6" />
+  </Svg>
+);
+
+export const IconHistory = (p: IconProps) => (
+  <Svg {...p}>
+    <path d="M3 12a9 9 0 103-6.7L3 8M3 3v5h5M12 7v5l3 2" />
+  </Svg>
+);
+
 export const IconLayers = (p: IconProps) => (
   <Svg {...p}>
     <path d="M12 3l9 5-9 5-9-5zM3 13l9 5 9-5M3 17.5l9 5 9-5" />

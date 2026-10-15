@@ -941,12 +941,33 @@ class DemoSeeder {
           break;
         case 'reply': {
           const platformReplyId = `mock-reply-${hash(`${d.externalId}:${ev.at}`)}`;
+          // 示範資料：部分回覆是採用或修改 AI 建議後送出，讓數據看板的 AI 使用數據有內容
+          const pick = parseInt(hash(`ai:${d.externalId}:${ev.at}`), 36) % 10;
+          const source = pick < 4 ? 'ai_adopted' : pick < 6 ? 'ai_edited' : 'manual';
+          const aiOriginal = source === 'ai_adopted' ? ev.body : source === 'ai_edited' ? `謝謝您的留言！${ev.body.replace(/^[^，。！]{0,6}[，！]/, '')}` : null;
+          const suggestionId =
+            aiOriginal === null
+              ? null
+              : await insert(this.db, 'ai_suggestions', {
+                  comment_id: d.id,
+                  brand_id: d.brand.id,
+                  variant_key: 'friendly',
+                  variant_label: '親切版',
+                  body: aiOriginal,
+                  knowledge_ids: [],
+                  generation_round: 1,
+                  is_adopted: 1,
+                  requested_by_id: ev.by.id,
+                  created_at: createdAt,
+                });
           const replyId = await insert(this.db, 'replies', {
             comment_id: d.id,
             brand_id: d.brand.id,
             body: ev.body,
-            source: 'manual',
-            was_edited: 0,
+            source,
+            ai_suggestion_id: suggestionId,
+            ai_original_body: aiOriginal,
+            was_edited: source === 'ai_edited' ? 1 : 0,
             sent_by_id: ev.by.id,
             status_after: ev.after,
             platform_reply_id: platformReplyId,
@@ -963,7 +984,7 @@ class DemoSeeder {
             summary: `${ev.by.name} 回覆留言，狀態改為「${STATUS_LABELS[ev.after]}」`,
             before: { status: 'pending' },
             after: { status: ev.after },
-            detail: { replyId, source: 'manual', platformReplyId },
+            detail: { replyId, source, platformReplyId, suggestionId },
           });
           break;
         }

@@ -975,3 +975,214 @@ export interface BatchStatusInput {
   status: 'no_action' | 'done';
   reason?: string;
 }
+
+// ---------- 階段 5：數據看板、異常事件、社群洞察、報表、操作紀錄 ----------
+export interface DateRange {
+  /** YYYY-MM-DD（台灣時間，含當天） */
+  from: string;
+  to: string;
+}
+
+export interface CountItem {
+  key: string;
+  label: string;
+  count: number;
+}
+
+export interface OpsMetrics {
+  total: number;
+  today: number;
+  /** 範圍內留言目前的狀態分布 */
+  pending: number;
+  inProgress: number;
+  waiting: number;
+  transferred: number;
+  done: number;
+  noAction: number;
+  /** 目前（不限範圍）即將超時、已超時的待回覆留言 */
+  nearDue: number;
+  overdue: number;
+  /** 平均首次回覆時間（分鐘） */
+  avgFirstResponseMinutes: number | null;
+  /** 依各類型時效計算的達成率 */
+  slaMetRate: number | null;
+  /** 60 分鐘內首次回覆的比例（需要回覆的留言） */
+  within60Rate: number | null;
+  needReply: number;
+}
+
+export interface AiMetrics {
+  suggestions: number;
+  humanReplies: number;
+  /** 人工回覆中採用（含修改）AI 建議的比例 */
+  adoptionRate: number | null;
+  /** 採用 AI 建議時有修改的比例 */
+  editRate: number | null;
+  autoReplied: number;
+  autoRate: number | null;
+  forcedHuman: number;
+  knowledgeGap: number;
+}
+
+export interface DailyPoint {
+  date: string;
+  total: number;
+  positive: number;
+  neutral: number;
+  negative: number;
+  firstResponses: number;
+  autoReplied: number;
+}
+
+export interface PostVolume {
+  postId: number;
+  title: string;
+  platform: string;
+  brandName: string;
+  isAd: boolean;
+  count: number;
+  negative: number;
+}
+
+export interface CommunityMetrics {
+  byPlatform: Array<CountItem & { negative: number }>;
+  byBrand: Array<CountItem & { negative: number; color: string }>;
+  topPosts: PostVolume[];
+  topAds: PostVolume[];
+  byCategory: CountItem[];
+  sentiment: { positive: number; neutral: number; negative: number };
+  complaints: number;
+  opportunities: number;
+  hotTopics: CountItem[];
+  commonQuestions: CountItem[];
+}
+
+export interface TeamMemberMetrics {
+  userId: number;
+  name: string;
+  role: Role;
+  replies: number;
+  /** 處理過的留言數（回覆或結案） */
+  handled: number;
+  firstResponses: number;
+  avgFirstResponseMinutes: number | null;
+  /** 首次回覆超過時效的比例 */
+  lateRate: number | null;
+  aiUseRate: number | null;
+  topCategories: CountItem[];
+}
+
+export interface DashboardResponse {
+  range: DateRange;
+  brandIds: number[];
+  ops: OpsMetrics;
+  ai: AiMetrics;
+  community: CommunityMetrics;
+  team: TeamMemberMetrics[];
+  daily: DailyPoint[];
+  serverTime: string;
+}
+
+export type AnomalyType =
+  | 'negative_spike'
+  | 'product_issue'
+  | 'post_burst'
+  | 'low_rating'
+  | 'repeated_question'
+  | 'hot_topic'
+  | 'opportunity'
+  | 'hot_thread';
+
+export interface AnomalyExample {
+  commentId: number;
+  authorName: string;
+  body: string;
+  occurredAt: string;
+}
+
+export interface AnomalyEvent {
+  key: string;
+  type: AnomalyType;
+  typeLabel: string;
+  severity: 'high' | 'medium' | 'low';
+  title: string;
+  description: string;
+  brandId: number;
+  brandName: string;
+  detectedAt: string;
+  current: number;
+  baseline: number | null;
+  postId: number | null;
+  link: string;
+  examples: AnomalyExample[];
+  ack: { userName: string; note: string; createdAt: string } | null;
+}
+
+export interface AnomaliesResponse {
+  events: AnomalyEvent[];
+  serverTime: string;
+}
+
+export interface InsightExample {
+  commentId: number;
+  authorName: string;
+  body: string;
+  brandName: string;
+  platform: string;
+}
+
+export interface InsightItem {
+  label: string;
+  count: number;
+  examples: InsightExample[];
+}
+
+export interface InsightSection {
+  key: string;
+  title: string;
+  description: string;
+  items: InsightItem[];
+}
+
+export interface InsightsResponse {
+  range: DateRange;
+  totalComments: number;
+  sections: InsightSection[];
+}
+
+export interface ComparisonRow {
+  key: string;
+  label: string;
+  total: number;
+  negative: number;
+  complaints: number;
+  avgFirstResponseMinutes: number | null;
+  slaMetRate: number | null;
+  autoRate: number | null;
+  adoptionRate: number | null;
+}
+
+export interface ReportResponse {
+  range: DateRange;
+  previous: DateRange;
+  ops: OpsMetrics;
+  ai: AiMetrics;
+  previousOps: OpsMetrics;
+  previousAi: AiMetrics;
+  community: CommunityMetrics;
+  daily: DailyPoint[];
+  brands: ComparisonRow[];
+  platforms: ComparisonRow[];
+  anomalies: AnomalyEvent[];
+  insights: InsightSection[];
+  /** 自動整理的重點摘要 */
+  highlights: string[];
+  generatedAt: string;
+}
+
+export interface AuditQueryResponse {
+  items: Array<AuditLogEntry & { replyBody?: string | null; aiOriginalBody?: string | null; replySource?: string | null }>;
+  total: number;
+  page: number;
+  pageSize: number;
+}

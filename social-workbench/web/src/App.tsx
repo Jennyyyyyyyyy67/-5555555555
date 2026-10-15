@@ -15,6 +15,11 @@ import AutomationPage from './pages/automation/AutomationPage';
 import CategoriesPage from './pages/settings/CategoriesPage';
 import KnowledgePage from './pages/knowledge/KnowledgePage';
 import BatchPage from './pages/batch/BatchPage';
+import DashboardPage from './pages/analytics/DashboardPage';
+import AnomaliesPage from './pages/analytics/AnomaliesPage';
+import InsightsPage from './pages/analytics/InsightsPage';
+import ReportsPage from './pages/analytics/ReportsPage';
+import AuditPage from './pages/analytics/AuditPage';
 import StylePage from './pages/settings/StylePage';
 
 export default function App() {
@@ -37,6 +42,11 @@ export default function App() {
         <Route path="/inbox" element={<InboxPage />} />
         <Route path="/inbox/:id" element={<InboxPage />} />
         <Route path="/batch" element={<BatchPage />} />
+        <Route path="/dashboard" element={<RequirePermission perm="viewDashboard"><DashboardPage /></RequirePermission>} />
+        <Route path="/anomalies" element={<RequirePermission perm="viewDashboard"><AnomaliesPage /></RequirePermission>} />
+        <Route path="/insights" element={<RequirePermission perm="viewDashboard"><InsightsPage /></RequirePermission>} />
+        <Route path="/reports" element={<RequirePermission perm="viewDashboard"><ReportsPage /></RequirePermission>} />
+        <Route path="/audit" element={<RequirePermission perm="viewAuditLogs"><AuditPage /></RequirePermission>} />
         <Route path="/knowledge" element={<KnowledgePage />} />
         <Route path="/settings/style" element={<RequirePermission perm="viewAccounts"><StylePage /></RequirePermission>} />
         <Route path="/automation" element={<RequirePermission perm="testAutomation"><AutomationPage /></RequirePermission>} />

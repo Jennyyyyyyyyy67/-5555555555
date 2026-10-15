@@ -530,7 +530,7 @@ describe('示範資料：一致性', () => {
     for (const r of replies) {
       const c = byId.get(r.comment_id)!;
       expect(r.brand_id).toBe(c.brand_id);
-      expect(r.source).toBe('manual');
+      expect(['manual', 'ai_adopted', 'ai_edited']).toContain(r.source);
       expect(r.delivery_status).toBe('sent');
       expect(r.platform_reply_id?.startsWith('mock-')).toBe(true);
       expect(['waiting', 'done']).toContain(r.status_after);

@@ -7,7 +7,7 @@ import { mkdirSync } from 'node:fs';
 import pg from 'pg';
 // PGlite 只在本機使用，延後載入，雲端部署時不需要它
 import type { PGlite } from '@electric-sql/pglite';
-import { DROP_SQL, SCHEMA_SQL, SCHEMA_VERSION } from './schema';
+import { DROP_SQL, SCHEMA_SQL, SCHEMA_VERSION, TABLES_IN_ORDER } from './schema';
 import { bootstrapSystemData } from './bootstrap';
 
 interface QueryResult {
@@ -340,7 +340,12 @@ async function flushBatch(db: DB): Promise<void> {
   const batch = batchOf(db);
   if (!batch || batch.queue.length === 0) return;
   const queue = batch.queue.splice(0);
-  const byTable = new Map<string, typeof queue>([...batch.touched].map((t) => [t, []]));
+  // 依資料表的相依順序送出（例如 ai_suggestions 要在參照它的 replies 之前）
+  const rank = (t: string) => {
+    const i = (TABLES_IN_ORDER as readonly string[]).indexOf(t);
+    return i < 0 ? Number.MAX_SAFE_INTEGER : i;
+  };
+  const byTable = new Map<string, typeof queue>([...batch.touched].sort((a, b) => rank(a) - rank(b)).map((t) => [t, []]));
   for (const item of queue) {
     const list = byTable.get(item.table);
     if (list) list.push(item);

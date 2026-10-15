@@ -1,6 +1,6 @@
 import type { ReactNode } from 'react';
 import type { Permission } from '../../../shared/permissions';
-import { IconBolt, IconLayers, IconBook, IconSparkle, IconBuilding, IconClock, IconDatabase, IconInbox, IconLink, IconUsers } from '../components/icons';
+import { IconAlert, IconBolt, IconBulb, IconChart, IconHistory, IconLayers, IconReport, IconBook, IconSparkle, IconBuilding, IconClock, IconDatabase, IconInbox, IconLink, IconUsers } from '../components/icons';
 
 export interface NavItem {
   to: string;
@@ -29,6 +29,16 @@ export const NAV_SECTIONS: NavSection[] = [
       { to: '/knowledge', label: '知識庫', icon: <IconBook /> },
       { to: '/settings/style', label: 'AI 回覆風格', icon: <IconSparkle />, perm: 'viewAccounts' },
       { to: '/automation', label: '自動回覆', icon: <IconBolt />, perm: 'testAutomation' },
+    ],
+  },
+  {
+    title: '數據與報表',
+    items: [
+      { to: '/dashboard', label: '數據看板', icon: <IconChart />, perm: 'viewDashboard' },
+      { to: '/anomalies', label: '異常事件', icon: <IconAlert />, perm: 'viewDashboard' },
+      { to: '/insights', label: '社群洞察', icon: <IconBulb />, perm: 'viewDashboard' },
+      { to: '/reports', label: '報表', icon: <IconReport />, perm: 'viewDashboard' },
+      { to: '/audit', label: '操作紀錄', icon: <IconHistory />, perm: 'viewAuditLogs' },
     ],
   },
   {

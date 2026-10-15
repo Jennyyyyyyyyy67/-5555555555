@@ -1,6 +1,6 @@
 import { Router, type Request, type Response } from 'express';
 import { z } from 'zod';
-import { all, get, insert, sqlIn, tx, updateById, type DB } from '../db';
+import { all, get, insert, run, sqlIn, tx, updateById, type DB } from '../db';
 import { ensureBrandDefaults } from '../db/bootstrap';
 import { authed, requirePermission } from '../auth/middleware';
 import type { BrandScope } from '../auth/scope';
@@ -248,6 +248,14 @@ export function brandRoutes(): Router {
         }
         if (activeChanged) patch.is_active = input.isActive;
         await updateById(db, 'brands', row.id, patch);
+        // 改名時，回覆風格的署名、常用語若含舊名稱也一併換成新名稱（避免 AI 回覆還在用舊品牌名）
+        if (diff?.after.name !== undefined && row.name) {
+          await run(
+            db,
+            `UPDATE brand_styles SET signature = replace(signature, ?::text, ?::text), common_phrases = replace(common_phrases, ?::text, ?::text) WHERE brand_id = ?`,
+            [row.name, diff.after.name, row.name, diff.after.name, row.id],
+          );
+        }
 
         if (diff) {
           const labels = Object.keys(diff.after).map((k) => FIELD_LABELS[k] ?? k);

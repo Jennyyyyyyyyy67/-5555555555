@@ -293,3 +293,17 @@ describe('PATCH /api/brands/:id', () => {
     expect((await auditRows(ctx)).map((l) => l.action)).toEqual(['brand.update', 'brand.deactivate']);
   });
 });
+
+describe('品牌改名', () => {
+  it('回覆風格署名中的舊品牌名稱會一併更新', async () => {
+    const { createTestContext } = await import('../test/helpers');
+    const { get, run } = await import('../db');
+    const ctx = await createTestContext();
+    await run(ctx.db, 'UPDATE brand_styles SET signature = ? WHERE brand_id = ?', ['品牌甲 客服中心', ctx.fx.brandA]);
+    const admin = await ctx.loginAs('admin');
+    const res = await admin.patch(`/api/brands/${ctx.fx.brandA}`).send({ name: '舞蹈工作室' });
+    expect(res.status).toBe(200);
+    const s = await get<{ signature: string }>(ctx.db, 'SELECT signature FROM brand_styles WHERE brand_id = ?', [ctx.fx.brandA]);
+    expect(s?.signature).toBe('舞蹈工作室 客服中心');
+  });
+});

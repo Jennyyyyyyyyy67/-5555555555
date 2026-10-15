@@ -2,6 +2,8 @@
 import { useState } from 'react';
 import { useAuth } from '../../auth/AuthContext';
 import { api, errorMessage } from '../../lib/api';
+import { useQuery } from '../../lib/useQuery';
+import type { InstagramStatus } from '../../../../shared/types';
 import { useToast } from '../../components/Toast';
 import { Button, Card, Checkbox, ConfirmDialog, Select } from '../../components/ui';
 
@@ -13,6 +15,9 @@ export function ClearBrandDemo({ onDone }: { onDone: () => void }) {
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const brand = brands.find((b) => b.id === brandId);
+  const ig = useQuery(() => api.get<InstagramStatus>('/integrations/instagram'), []);
+  const liveOf = (name: string | undefined) => (ig.data?.accounts ?? []).filter((a) => a.brandName === name).map((a) => `@${a.username}`);
+  const kept = liveOf(brand?.name);
   const run = async () => {
     setBusy(true);
     try {
@@ -37,6 +42,7 @@ export function ClearBrandDemo({ onDone }: { onDone: () => void }) {
             {brands.map((b) => (
               <option key={b.id} value={b.id}>
                 {b.name}
+                {liveOf(b.name).length ? `（含真實帳號 ${liveOf(b.name).join('、')}）` : ''}
               </option>
             ))}
           </Select>
@@ -45,12 +51,15 @@ export function ClearBrandDemo({ onDone }: { onDone: () => void }) {
             清除示範資料
           </Button>
         </div>
+        <p className="small" style={{ margin: 0 }}>
+          ✅ 品牌本身不會被刪除{kept.length ? `；真實帳號 ${kept.join('、')} 與它的留言會保留` : ''}。
+        </p>
       </div>
       <ConfirmDialog
         open={open}
         danger
         title={`清除「${brand?.name ?? ''}」的示範資料？`}
-        message={`會刪除示範社群帳號與它們的貼文、留言${removeKnowledge ? '，以及這個品牌的知識庫' : ''}，無法復原。已連結的真實帳號不受影響。`}
+        message={`品牌「${brand?.name ?? ''}」會保留，只刪除它底下的示範社群帳號與貼文、留言${removeKnowledge ? '，以及這個品牌的知識庫' : ''}，無法復原。${kept.length ? `真實帳號 ${kept.join('、')} 與它的留言會保留。` : '已連結的真實帳號不受影響。'}`}
         confirmText="確認清除"
         busy={busy}
         onCancel={() => setOpen(false)}

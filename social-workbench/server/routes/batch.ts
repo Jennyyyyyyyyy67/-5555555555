@@ -13,6 +13,8 @@ import { nowIso } from '../lib/clock';
 import { groupComments, needsIndividualHandling, personalize } from '../ai/grouping';
 import { searchKnowledge } from '../ai/knowledge';
 import { checkReply, composeVariants, loadFullStyle } from '../ai/compose';
+import { composeReplies } from '../ai/provider';
+import { claudeConfig } from '../ai/claude';
 import { STATUS_LABELS, type CommentStatus, type ContentType, type Priority } from '../../shared/constants';
 import type {
   BatchDraft,
@@ -207,6 +209,27 @@ export function batchRoutes(): Router {
     if (hits.length) notes.push(`這批回覆都引用同一份知識（${hits.map((h) => `「${h.title}」`).join('、')}），事實內容一致，只調整開頭與語氣。`);
     if (skipped.length) notes.push(`${skipped.length} 則留言不適合批次回覆，已排除，請個別處理。`);
 
+    // 有 Claude 時：以第一則留言產生一份回覆，事實內容整批共用，只換開頭稱呼
+    let aiBase: { body: string; knowledgeIds: number[] } | null = null;
+    if (claudeConfig().enabled) {
+      const first = usable[0];
+      const post = await get<{ title: string; body: string }>(db, 'SELECT p.title, p.body FROM posts p JOIN comments c ON c.post_id = p.id WHERE c.id = ?', [first.id]);
+      const r = await composeReplies({
+        authorName: '',
+        postContext: post ? `${post.title}${post.body && post.body !== post.title ? `｜${post.body}` : ''}`.slice(0, 300) : undefined,
+        body: usable.map((c) => c.body).slice(0, 5).join('\n'),
+        categoryKey,
+        riskFlags: parseJson<string[]>(first.risk_flags, []),
+        sentiment: first.sentiment,
+        brandName: brand.name,
+        style,
+        hits,
+        needsKnowledge: kn.needsKnowledge,
+        seed: first.id,
+      });
+      if (r.provider === 'claude') aiBase = r.variants.find((x) => x.key === variantKey) ?? r.variants[0] ?? null;
+    }
+
     const batchId = randomUUID();
     const now = nowIso();
     const drafts: BatchDraft[] = [];
@@ -217,6 +240,12 @@ export function batchRoutes(): Router {
         let body = '';
         let knowledgeIds: number[] = [];
         for (let attempt = 0; attempt < 6; attempt++) {
+          if (aiBase) {
+            body = personalize(aiBase.body, c.author_name, i + attempt, style.addressing);
+            knowledgeIds = aiBase.knowledgeIds;
+            if (!seen.has(body)) break;
+            continue;
+          }
           const v = composeVariants({
             body: c.body,
             categoryKey,

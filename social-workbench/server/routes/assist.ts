@@ -12,7 +12,8 @@ import { addMinutes, nowIso } from '../lib/clock';
 import { mockProvider } from '../ai/mockProvider';
 import { forceHumanReasons } from '../ai/safety';
 import { searchKnowledge } from '../ai/knowledge';
-import { checkReply, composeVariants, loadFullStyle } from '../ai/compose';
+import { checkReply, loadFullStyle } from '../ai/compose';
+import { composeReplies } from '../ai/provider';
 import { PRIORITIES, PRIORITY_LABELS, SLA_ACTIVE_STATUSES, type Priority, type RiskFlag, type Sentiment } from '../../shared/constants';
 import type { KnowledgeHit, ReplyCheckResult, SuggestionSet, SuggestionsResponse } from '../../shared/types';
 import { buildDetail } from './inbox';
@@ -99,7 +100,11 @@ async function latestSet(db: DB, ctx: Ctx): Promise<SuggestionSet | null> {
 async function generate(db: DB, ctx: Ctx, user: AuthUser): Promise<void> {
   const meta = await buildMeta(db, ctx);
   const round = ((await get<{ r: number | null }>(db, 'SELECT MAX(generation_round) AS r FROM ai_suggestions WHERE comment_id = ?', [ctx.c.id]))?.r ?? 0) + 1;
-  const variants = composeVariants({
+  const post = await get<{ title: string; body: string }>(db, 'SELECT title, body FROM posts WHERE id = ?', [ctx.c.post_id]);
+  const { variants, provider } = await composeReplies({
+    authorName: ctx.c.author_name,
+    postContext: post ? `${post.title}${post.body && post.body !== post.title ? `｜${post.body}` : ''}`.slice(0, 300) : undefined,
+    guidance: meta.guidance,
     body: ctx.c.body,
     categoryKey: ctx.categoryKey,
     riskFlags: meta.analysis.riskFlags,
@@ -137,7 +142,7 @@ async function generate(db: DB, ctx: Ctx, user: AuthUser): Promise<void> {
       targetType: 'comment',
       targetId: ctx.c.id,
       summary: `AI 產生 ${variants.length} 種回覆建議（第 ${round} 次${meta.knowledgeGap ? '，知識不足' : meta.kn.hits.length ? `，引用 ${meta.kn.hits.length} 則知識` : ''}）`,
-      detail: { round, knowledgeIds: meta.kn.hits.map((h) => h.id), knowledgeGap: meta.knowledgeGap },
+      detail: { round, knowledgeIds: meta.kn.hits.map((h) => h.id), knowledgeGap: meta.knowledgeGap, provider },
     });
   });
 }

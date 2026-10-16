@@ -93,6 +93,8 @@ export interface CategoryMeta {
 export interface MetaResponse {
   platforms: PlatformMeta[];
   categories: CategoryMeta[];
+  /** 目前使用的 AI：claude（真正的 AI）或 mock（關鍵字規則） */
+  ai: { provider: 'claude' | 'mock'; model: string | null };
 }
 
 // ---------- 品牌 ----------

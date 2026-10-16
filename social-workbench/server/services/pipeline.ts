@@ -8,7 +8,9 @@ import { mockFeed } from '../adapters/mock/mockFeed';
 import { mockProvider } from '../ai/mockProvider';
 import type { AIProvider, Analysis, BrandStyle } from '../ai/types';
 import { forceHumanReasons, KNOWLEDGE_AUTO_CATEGORIES, MIN_AUTO_CONFIDENCE, type ForceHumanReason } from '../ai/safety';
-import { checkReply, composeVariants, loadFullStyle } from '../ai/compose';
+import { checkReply, loadFullStyle } from '../ai/compose';
+import { analyzeComment, composeReplies } from '../ai/provider';
+import { claudeConfig } from '../ai/claude';
 import { brandDirectory, notify } from './comments';
 import { badRequest, HttpError, notFound } from '../lib/errors';
 import { needsKnowledge, searchKnowledge } from '../ai/knowledge';
@@ -169,9 +171,27 @@ function result_reason(categoryKey: string, risky: boolean): string {
 /** 判斷結果（不寫入資料庫）：自動化規則測試與實際處理共用 */
 export async function decide(
   db: DB,
-  input: { brandId: number; brandName: string; platform: string; accountType: string; body: string; authorName: string; rating: number | null; brandCode: string; seed: number },
+  input: {
+    brandId: number;
+    brandName: string;
+    platform: string;
+    accountType: string;
+    body: string;
+    authorName: string;
+    rating: number | null;
+    brandCode: string;
+    seed: number;
+    /** 留言所在貼文（讓 AI 理解前後文） */
+    postContext?: string;
+    /** 只用關鍵字規則判斷（大量舊留言） */
+    fast?: boolean;
+  },
 ): Promise<Omit<PipelineResult, 'commentId' | 'slaMinutes' | 'slaDueAt'>> {
-  const analysis = await ai.analyze({ body: input.body, authorName: input.authorName, rating: input.rating, platform: input.platform, brandCode: input.brandCode });
+  const analysis = await analyzeComment(
+    db,
+    { body: input.body, authorName: input.authorName, rating: input.rating, platform: input.platform, brandCode: input.brandCode, context: input.postContext },
+    { fast: input.fast },
+  );
   const cat = await get<{ name: string }>(db, 'SELECT name FROM comment_categories WHERE key = ?', [analysis.categoryKey]);
   const knowledge = await searchKnowledge(db, { brandId: input.brandId, body: input.body, categoryKey: analysis.categoryKey, categoryName: cat?.name ?? analysis.categoryKey });
   const forceHuman = forceHumanReasons(analysis, { needsKnowledge: needsKnowledge(analysis.categoryKey), hasHits: knowledge.hits.length > 0 });
@@ -208,7 +228,9 @@ export async function decide(
     } else if ((KNOWLEDGE_AUTO_CATEGORIES as readonly string[]).includes(analysis.categoryKey)) {
       // 知識庫有答案的詢問：回覆內容直接引用知識，並通過送出前檢查才自動送出
       const style = await loadFullStyle(db, input.brandId);
-      const variants = composeVariants({
+      const { variants } = await composeReplies({
+        authorName: input.authorName,
+        postContext: input.postContext,
         body: input.body,
         categoryKey: analysis.categoryKey,
         riskFlags: analysis.riskFlags,
@@ -233,16 +255,45 @@ export async function decide(
         explanation = `符合規則「${matchedRule.ruleName}」，知識庫有可引用的答案且通過送出前檢查，AI 已自動回覆。`;
       }
     } else {
-      decision = 'auto_replied';
-      replyBody = await ai.generateSimpleReply({
-        body: input.body,
-        authorName: input.authorName,
-        categoryKey: analysis.categoryKey,
-        brandName: input.brandName,
-        style: await loadStyle(db, input.brandId),
-        seed: input.seed,
-      });
-      explanation = `符合規則「${matchedRule.ruleName}」且通過安全檢查，AI 已自動回覆。`;
+      // 稱讚、一般互動：有 Claude 時依品牌風格產生，否則用範本；送出前一樣要通過檢查
+      let body: string;
+      if (claudeConfig().enabled) {
+        const style = await loadFullStyle(db, input.brandId);
+        const { variants } = await composeReplies({
+          authorName: input.authorName,
+          postContext: input.postContext,
+          body: input.body,
+          categoryKey: analysis.categoryKey,
+          riskFlags: analysis.riskFlags,
+          sentiment: analysis.sentiment,
+          brandName: input.brandName,
+          style,
+          hits: [],
+          needsKnowledge: false,
+          seed: input.seed,
+        });
+        body = (variants.find((x) => x.key === 'friendly') ?? variants.find((x) => x.key !== 'lively') ?? variants[0])?.body ?? '';
+      } else {
+        body = await ai.generateSimpleReply({
+          body: input.body,
+          authorName: input.authorName,
+          categoryKey: analysis.categoryKey,
+          brandName: input.brandName,
+          style: await loadStyle(db, input.brandId),
+          seed: input.seed,
+        });
+      }
+      const warnings = body ? await checkReply(db, input.brandId, body) : [];
+      if (!body) {
+        explanation = `符合規則「${matchedRule.ruleName}」，但 AI 沒有產生回覆，交給人工處理。`;
+      } else if (warnings.length) {
+        forceHuman.push({ code: 'unchecked_reply', label: `AI 產生的回覆含有需要人工確認的內容：${warnings.map((w) => w.message).join('；')}` });
+        explanation = `符合規則「${matchedRule.ruleName}」，但產生的回覆需要人工確認，交給人工處理。`;
+      } else {
+        decision = 'auto_replied';
+        replyBody = body;
+        explanation = `符合規則「${matchedRule.ruleName}」且通過安全檢查，AI 已自動回覆。`;
+      }
     }
   } else {
     // 自動按讚：只用於正面、無風險的留言
@@ -286,7 +337,11 @@ export async function processIncoming(
   } = {},
 ): Promise<PipelineResult> {
   const now = nowIso();
+  const postRow = await get<{ title: string; body: string }>(db, 'SELECT title, body FROM posts WHERE id = ?', [c.postId]);
+  const postContext = postRow ? `${postRow.title}${postRow.body && postRow.body !== postRow.title ? `｜${postRow.body}` : ''}`.slice(0, 300) : undefined;
   const result = await decide(db, {
+    postContext,
+    fast: opts.historical,
     brandId: ctx.brand.id,
     brandName: ctx.brand.name,
     brandCode: ctx.brand.code,
@@ -366,7 +421,7 @@ export async function processIncoming(
     const analysisId = await insert(db, 'ai_analyses', {
       comment_id: commentId,
       brand_id: ctx.brand.id,
-      provider: ai.name,
+      provider: a.provider ?? ai.name,
       category_key: a.categoryKey,
       category_id: category?.id ?? null,
       tags: a.tags,

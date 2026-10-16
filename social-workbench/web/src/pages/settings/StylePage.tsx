@@ -7,6 +7,7 @@ import { formatDateTime } from '../../lib/format';
 import { useToast } from '../../components/Toast';
 import { Alert, Badge, Button, Card, ErrorMessage, Field, Loading, PageHeader, Select, Switch, TextInput, Textarea } from '../../components/ui';
 import type { BrandStyleInput, BrandStyleView, KnowledgeHit, SuggestionVariant } from '../../../../shared/types';
+import { useMeta } from '../../lib/meta';
 import './style.css';
 
 const SAMPLES = ['好喜歡你們的產品！', '請問這個多少錢？', '用一個月就壞了，我要退款', '請問門市在哪裡？'];
@@ -20,6 +21,7 @@ interface Preview {
 }
 
 export default function StylePage() {
+  const { meta } = useMeta();
   const { can } = useAuth();
   const { activeBrands, currentBrand } = useBrandScope();
   const toast = useToast();
@@ -110,6 +112,11 @@ export default function StylePage() {
           </Select>
         }
       />
+      {meta?.ai.provider === 'claude' ? (
+        <Alert tone="success">目前使用真正的 AI（Claude，模型 {meta.ai.model}）判斷留言與產生回覆；事實內容只會引用知識庫，送出前仍會檢查。</Alert>
+      ) : meta ? (
+        <Alert tone="info">目前使用模擬 AI（關鍵字規則與範本）。在 Vercel 設定 ANTHROPIC_API_KEY 後，會改用 Claude 依品牌風格寫回覆。</Alert>
+      ) : null}
       {!editable && <Alert>你可以檢視與預覽；只有管理員可以修改。</Alert>}
       {error ? (
         <ErrorMessage error={error} onRetry={() => void load(brandId)} />

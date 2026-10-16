@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { all } from '../db';
 import { platformMeta } from '../adapters/registry';
+import { aiStatus } from '../ai/provider';
 import type { CategoryMeta, MetaResponse } from '../../shared/types';
 import type { Priority } from '../../shared/constants';
 
@@ -33,7 +34,7 @@ export async function listCategories(db: Parameters<typeof all>[0]): Promise<Cat
 export function metaRoutes(): Router {
   const r = Router();
   r.get('/', async (req, res) => {
-    const body: MetaResponse = { platforms: platformMeta(), categories: await listCategories(req.db) };
+    const body: MetaResponse = { platforms: platformMeta(), categories: await listCategories(req.db), ai: aiStatus() };
     res.json(body);
   });
   return r;

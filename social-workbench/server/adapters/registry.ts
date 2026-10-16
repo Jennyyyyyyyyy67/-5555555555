@@ -1,13 +1,14 @@
 import type { PlatformAdapter } from './types';
 import { createMockAdapter } from './mock/createMockAdapter';
 import { createInstagramAdapter } from './instagram';
+import { createFacebookAdapter } from './facebook';
 import type { PlatformMeta } from '../../shared/types';
 
 // 各平台的帳號類型與可用動作。能力設定參考各平台公開 API 的實際限制：
 // - Instagram API 不支援對留言按讚、不支援封鎖。
 // - YouTube 的「隱藏」對應「保留待審」，封鎖對應「封鎖作者」，API 不支援對留言按讚。
 // - Google 商家評論只能回覆，無法隱藏或刪除顧客評論。
-const facebook = createMockAdapter({
+const facebook = createFacebookAdapter(createMockAdapter({
   platform: 'facebook',
   label: 'Facebook',
   accountTypes: [
@@ -24,7 +25,7 @@ const facebook = createMockAdapter({
       capabilities: { reply: true, like: true, hide: false, delete: true, block: true },
     },
   ],
-});
+}));
 
 const instagram = createInstagramAdapter(createMockAdapter({
   platform: 'instagram',

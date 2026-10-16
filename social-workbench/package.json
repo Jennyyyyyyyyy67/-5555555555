@@ -20,6 +20,7 @@
     "build:vercel": "node scripts/build-vercel.mjs"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.135.0",
     "@electric-sql/pglite": "^0.5.8",
     "express": "^5.2.1",
     "pg": "^8.23.1",

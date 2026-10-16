@@ -1,4 +1,4 @@
-// 真實平台串接：Instagram 帳號連結（OAuth）、手動同步、中斷連結、Webhook 即時通知。
+// 真實平台串接：Instagram 帳號、Facebook 粉專連結（OAuth）、手動同步、中斷連結、Webhook 即時通知。
 import { Router, type Request, type Response } from 'express';
 import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
 import { z } from 'zod';
@@ -13,10 +13,12 @@ import { badRequest, notFound } from '../lib/errors';
 import { nowIso } from '../lib/clock';
 import { config } from '../config';
 import * as ig from '../integrations/instagram';
+import * as fb from '../integrations/facebook';
 import { lastInstagramStats } from '../adapters/instagram';
 import type { InstagramStatus, SyncResult } from '../../shared/types';
 
 const STATE_COOKIE = 'swb_ig_state';
+const FB_STATE_COOKIE = 'swb_fb_state';
 
 /** 對外網址：優先使用 PUBLIC_BASE_URL，否則依目前請求的網址 */
 export function baseUrl(req: Request): string {
@@ -25,6 +27,7 @@ export function baseUrl(req: Request): string {
   return `${req.protocol}://${req.get('host')}`;
 }
 const redirectUri = (req: Request) => `${baseUrl(req)}/api/integrations/instagram/callback`;
+const fbRedirectUri = (req: Request) => `${baseUrl(req)}/api/integrations/facebook/callback`;
 
 /** 回到前端的社群帳號頁，帶上結果訊息 */
 function backToAccounts(res: Response, params: Record<string, string>): void {
@@ -157,11 +160,12 @@ export function integrationRoutes(): Router {
   });
 
   // 中斷連結：刪除權杖（保留帳號與留言紀錄）
-  r.post('/instagram/:accountId/disconnect', requirePermission('manageAccounts'), async (req: Request, res: Response) => {
+  const disconnect = async (req: Request, res: Response) => {
     const { user, scope } = authed(req);
     const id = Number(req.params.accountId);
-    const acct = await get<{ id: number; brand_id: number; handle: string }>(req.db, 'SELECT id, brand_id, handle FROM social_accounts WHERE id = ?', [id]);
+    const acct = await get<{ id: number; brand_id: number; handle: string; name: string; platform: string }>(req.db, 'SELECT id, brand_id, handle, name, platform FROM social_accounts WHERE id = ?', [id]);
     if (!acct || !scope.brandIds.includes(acct.brand_id)) throw notFound('找不到社群帳號');
+    const label = acct.platform === 'facebook' ? `Facebook 粉專「${acct.name}」` : `Instagram 帳號 ${acct.handle}`;
     await tx(req.db, async () => {
       await run(req.db, 'DELETE FROM account_credentials WHERE account_id = ?', [id]);
       await run(req.db, "UPDATE social_accounts SET status = 'disconnected', updated_at = ? WHERE id = ?", [nowIso(), id]);
@@ -172,10 +176,141 @@ export function integrationRoutes(): Router {
         action: 'account.disconnect',
         targetType: 'social_account',
         targetId: id,
-        summary: `${user.name} 中斷 Instagram 帳號 ${acct.handle} 的連結`,
+        summary: `${user.name} 中斷${label}的連結`,
       });
     });
     res.status(204).end();
+  };
+  r.post('/instagram/:accountId/disconnect', requirePermission('manageAccounts'), disconnect);
+  r.post('/facebook/:accountId/disconnect', requirePermission('manageAccounts'), disconnect);
+
+  // ---------- Facebook 粉絲專頁 ----------
+  r.get('/facebook', requireAuth(), async (req: Request, res: Response) => {
+    const { scope } = authed(req);
+    const accounts = scope.brandIds.length
+      ? await all<{ account_id: number; username: string; connected_at: string; brand_name: string; last_synced_at: string | null; status: string }>(
+          req.db,
+          `SELECT c.account_id, c.username, c.connected_at, b.name AS brand_name, a.last_synced_at, a.status
+           FROM account_credentials c JOIN social_accounts a ON a.id = c.account_id JOIN brands b ON b.id = a.brand_id
+           WHERE c.provider = 'facebook' AND ${sqlIn('a.brand_id', scope.brandIds)} ORDER BY c.connected_at`,
+        )
+      : [];
+    const body: InstagramStatus = {
+      configured: fb.facebookConfig().configured,
+      redirectUri: fbRedirectUri(req),
+      webhookUrl: '',
+      webhookConfigured: false,
+      accounts: accounts.map((a) => ({
+        accountId: a.account_id,
+        username: a.username,
+        brandName: a.brand_name,
+        tokenExpiresAt: null,
+        connectedAt: a.connected_at,
+        lastSyncedAt: a.last_synced_at,
+        status: a.status,
+      })),
+    };
+    res.json(body);
+  });
+
+  r.get('/facebook/start', requirePermission('manageAccounts'), async (req: Request, res: Response) => {
+    const { scope } = authed(req);
+    if (!fb.facebookConfig().configured) {
+      return backToAccounts(res, { fb_error: '系統尚未設定 FACEBOOK_APP_ID 與 FACEBOOK_APP_SECRET，請先依教學在 Vercel 設定環境變數' });
+    }
+    const brandId = Number(req.query.brandId);
+    if (!scope.activeBrandIds.includes(brandId)) return backToAccounts(res, { fb_error: '請選擇要連結到哪個品牌（品牌需為啟用中）' });
+    const nonce = randomBytes(16).toString('hex');
+    res.cookie(FB_STATE_COOKIE, `${nonce}.${brandId}`, { httpOnly: true, sameSite: 'lax', secure: config.cookieSecure, maxAge: 10 * 60 * 1000, path: '/api/integrations' });
+    res.redirect(302, fb.authorizeUrl(fbRedirectUri(req), nonce));
+  });
+
+  // Facebook 授權完成後導回這裡：使用者在 Facebook 畫面勾選的每個粉專都會連結到這個品牌
+  r.get('/facebook/callback', requireAuth(), async (req: Request, res: Response) => {
+    const { user, scope } = authed(req);
+    res.clearCookie(FB_STATE_COOKIE, { path: '/api/integrations' });
+    if (req.query.error) {
+      return backToAccounts(res, { fb_error: `Facebook 未授權：${String(req.query.error_description ?? req.query.error_reason ?? req.query.error)}` });
+    }
+    const [nonce, brandRaw] = (parseCookies(req.headers.cookie)[FB_STATE_COOKIE] ?? '').split('.');
+    const brandId = Number(brandRaw);
+    if (!nonce || nonce !== String(req.query.state ?? '') || !scope.activeBrandIds.includes(brandId)) {
+      return backToAccounts(res, { fb_error: '連結逾時或驗證失敗，請重新按一次「連結 Facebook 粉專」' });
+    }
+    const code = String(req.query.code ?? '');
+    if (!code) return backToAccounts(res, { fb_error: 'Facebook 沒有回傳授權碼，請再試一次' });
+
+    let pages: fb.FbPage[];
+    try {
+      pages = await fb.listPages(await fb.exchangeCode(code, fbRedirectUri(req)));
+    } catch (err) {
+      return backToAccounts(res, { fb_error: (err as Error).message });
+    }
+    if (pages.length === 0) {
+      return backToAccounts(res, { fb_error: '沒有可以連結的粉專。請確認你是粉專的管理員，並在 Facebook 授權畫面勾選要連結的粉專' });
+    }
+    const db = req.db;
+    const connected: string[] = [];
+    const skipped: string[] = [];
+    let imported = 0;
+    for (const page of pages) {
+      const existing = await get<{ id: number; brand_id: number; brand_name: string }>(
+        db,
+        "SELECT a.id, a.brand_id, b.name AS brand_name FROM social_accounts a JOIN brands b ON b.id = a.brand_id WHERE a.platform = 'facebook' AND a.account_type = 'fb_page' AND a.external_id = ?",
+        [page.id],
+      );
+      if (existing && existing.brand_id !== brandId) {
+        skipped.push(`「${page.name}」已連結在「${existing.brand_name}」`);
+        continue;
+      }
+      const now = nowIso();
+      const accountId = await tx(db, async () => {
+        let id = existing?.id;
+        if (id) {
+          await updateById(db, 'social_accounts', id, { name: page.name, status: 'connected', is_active: true, last_checked_at: now, updated_at: now });
+        } else {
+          id = await insert(db, 'social_accounts', {
+            brand_id: brandId,
+            platform: 'facebook',
+            account_type: 'fb_page',
+            name: page.name,
+            handle: '',
+            external_id: page.id,
+            adapter_key: 'live:facebook',
+            status: 'connected',
+            is_active: true,
+            last_checked_at: now,
+            created_at: now,
+            updated_at: now,
+          });
+        }
+        await saveCredential(db, {
+          accountId: id,
+          provider: 'facebook',
+          accessToken: page.accessToken,
+          expiresAt: null,
+          scopes: fb.FB_SCOPES,
+          platformUserId: page.id,
+          username: page.name,
+          userId: user.id,
+        });
+        await audit(db, {
+          actorType: 'user',
+          actorUserId: user.id,
+          brandId,
+          action: existing ? 'account.reconnect' : 'account.connect',
+          targetType: 'social_account',
+          targetId: id,
+          summary: `${user.name} ${existing ? '重新連結' : '連結'} Facebook 粉專「${page.name}」`,
+          after: { pageId: page.id, tasks: page.tasks },
+        });
+        return id;
+      });
+      connected.push(page.name);
+      imported += (await safeSync(db, accountId))?.newComments ?? 0;
+    }
+    if (connected.length === 0) return backToAccounts(res, { fb_error: `沒有連結任何粉專：${skipped.join('；')}` });
+    backToAccounts(res, { fb: 'connected', pages: connected.join('、'), imported: String(imported), ...(skipped.length ? { fb_skipped: skipped.join('；') } : {}) });
   });
 
   // 收件匣開著時定期呼叫：同步已連結真實平台、且一段時間沒同步的帳號

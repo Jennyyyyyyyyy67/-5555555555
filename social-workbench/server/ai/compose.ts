@@ -52,6 +52,8 @@ export interface ComposeInput {
   hits: KnowledgeHit[];
   needsKnowledge: boolean;
   seed: number;
+  /** 品牌對這類留言的處理提示 */
+  guidance?: string;
 }
 
 export interface ComposedVariant {

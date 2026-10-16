@@ -6,9 +6,10 @@ import { authed, requirePermission } from '../auth/middleware';
 import { audit, diffFields } from '../services/audit';
 import { notFound } from '../lib/errors';
 import { nowIso } from '../lib/clock';
-import { composeVariants, checkReply, DEFAULT_VARIANTS, loadFullStyle } from '../ai/compose';
+import { checkReply, DEFAULT_VARIANTS, loadFullStyle } from '../ai/compose';
 import { searchKnowledge } from '../ai/knowledge';
 import { mockProvider } from '../ai/mockProvider';
+import { composeReplies } from '../ai/provider';
 import type { BrandStyleView, SuggestionVariant } from '../../shared/types';
 
 const list = (max: number, label: string) => z.array(z.string().trim().min(1).max(60, `${label}每項最多 60 個字`)).max(max, `${label}最多 ${max} 項`);
@@ -113,7 +114,7 @@ export function styleRoutes(): Router {
     const cat = await get<{ name: string }>(req.db, 'SELECT name FROM comment_categories WHERE key = ?', [a.categoryKey]);
     const kn = await searchKnowledge(req.db, { brandId, body, categoryKey: a.categoryKey, categoryName: cat?.name ?? a.categoryKey });
     const full: BrandStyleView = { ...style, brandId, updatedAt: '', updatedByName: null };
-    const variants = composeVariants({ body, categoryKey: a.categoryKey, riskFlags: a.riskFlags, sentiment: a.sentiment, brandName: brand.name, style: full, hits: kn.hits, needsKnowledge: kn.needsKnowledge, seed: body.length });
+    const { variants } = await composeReplies({ body, categoryKey: a.categoryKey, riskFlags: a.riskFlags, sentiment: a.sentiment, brandName: brand.name, style: full, hits: kn.hits, needsKnowledge: kn.needsKnowledge, seed: body.length });
     const out: SuggestionVariant[] = [];
     for (const v of variants) out.push({ id: null, key: v.key, label: v.label, body: v.body, knowledgeIds: v.knowledgeIds, warnings: await checkReply(req.db, brandId, v.body, full) });
     res.json({ categoryName: cat?.name ?? a.categoryKey, knowledgeGap: kn.needsKnowledge && kn.hits.length === 0, hits: kn.hits, variants: out });

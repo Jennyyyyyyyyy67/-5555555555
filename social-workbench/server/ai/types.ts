@@ -8,6 +8,8 @@ export interface AnalyzeInput {
   rating: number | null;
   platform: string;
   brandCode: string;
+  /** 留言所在貼文的標題或內文（讓 AI 理解前後文） */
+  context?: string;
 }
 
 export interface Analysis {
@@ -26,6 +28,8 @@ export interface Analysis {
   isMultiIssue: boolean;
   /** 判斷依據（給人看） */
   reasons: string[];
+  /** 判斷的 AI（mock 或 claude:模型） */
+  provider?: string;
 }
 
 export interface BrandStyle {

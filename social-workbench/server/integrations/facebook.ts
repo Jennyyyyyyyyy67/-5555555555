@@ -105,10 +105,12 @@ export interface FbPost {
   message?: string;
   created_time: string;
   permalink_url?: string;
+  /** Facebook 顯示的留言總數（用來判斷是否有留言被隱藏未提供） */
+  comments?: { summary?: { total_count?: number } };
 }
 
 export async function listPosts(pageToken: string, pageId: string, limit = 25): Promise<FbPost[]> {
-  const r = await call<{ data?: FbPost[] }>(graph(`${pageId}/posts`, { fields: 'id,message,created_time,permalink_url', limit: String(limit), access_token: pageToken }));
+  const r = await call<{ data?: FbPost[] }>(graph(`${pageId}/posts`, { fields: 'id,message,created_time,permalink_url,comments.limit(0).summary(true)', limit: String(limit), access_token: pageToken }));
   return r.data ?? [];
 }
 

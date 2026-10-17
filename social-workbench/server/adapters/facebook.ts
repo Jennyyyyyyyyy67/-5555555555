@@ -11,6 +11,8 @@ function titleOf(p: fb.FbPost): string {
 }
 
 const lastComplete = new Map<number, string[]>();
+/** 最近一次同步的統計（排查「粉專有留言但 API 沒回傳」用） */
+export const lastFacebookStats = new Map<number, { posts: number; countedComments: number; returned: number }>();
 
 export function createFacebookAdapter(mock: PlatformAdapter): PlatformAdapter {
   const live = (a: AdapterAccount) => !!a.accessToken && a.accountType === 'fb_page';
@@ -49,7 +51,14 @@ export function createFacebookAdapter(mock: PlatformAdapter): PlatformAdapter {
       const token = a.accessToken!;
       const posts = await fb.listPosts(token, a.externalId, 25);
       const lists = await Promise.all(posts.map((p) => fb.listComments(token, p.id).then((r) => ({ p, ...r }))));
-      lastComplete.set(a.id, lists.filter((l) => l.complete).map((l) => l.p.id));
+      const counted = (p: fb.FbPost) => p.comments?.summary?.total_count ?? 0;
+      lastFacebookStats.set(a.id, {
+        posts: posts.length,
+        countedComments: posts.reduce((n, p) => n + counted(p), 0),
+        returned: lists.reduce((n, l) => n + l.data.length, 0),
+      });
+      // 防呆：回傳的留言明顯少於貼文顯示的數量（權限不足被隱藏），就不用來判斷刪除
+      lastComplete.set(a.id, lists.filter((l) => l.complete && l.data.length >= counted(l.p) * 0.8).map((l) => l.p.id));
       const out: IncomingComment[] = [];
       for (const { p, data } of lists) {
         // 粉專自己的留言（小編直接在 Facebook 上的回覆）：from.id 等於粉專 id

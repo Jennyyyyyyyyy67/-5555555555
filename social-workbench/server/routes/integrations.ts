@@ -15,6 +15,7 @@ import { config } from '../config';
 import * as ig from '../integrations/instagram';
 import * as fb from '../integrations/facebook';
 import { lastInstagramStats } from '../adapters/instagram';
+import { lastFacebookStats } from '../adapters/facebook';
 import type { InstagramStatus, SyncResult } from '../../shared/types';
 
 const STATE_COOKIE = 'swb_ig_state';
@@ -331,9 +332,12 @@ export function integrationRoutes(): Router {
     try {
       const s = await syncAccountDetailed(req.db, id);
       const st = lastInstagramStats.get(id);
+      const fst = lastFacebookStats.get(id);
       const diag = st
         ? `；Instagram 顯示最近 ${st.media} 篇貼文共有 ${st.countedComments} 則留言，API 實際提供 ${st.returnedTopLevel} 則${st.countedComments > st.returnedTopLevel ? '（有留言被 Instagram 隱藏未提供，通常是開發模式只提供測試人員的留言）' : ''}`
-        : '';
+        : fst
+          ? `；Facebook 顯示最近 ${fst.posts} 篇貼文共有 ${fst.countedComments} 則留言，API 實際提供 ${fst.returned} 則${fst.countedComments > fst.returned ? '（有留言被 Facebook 隱藏未提供：應用程式審查通過前，只提供應用程式管理員、開發者、測試人員的留言）' : ''}`
+          : '';
       body = { ok: true, message: `同步完成：新增 ${s.newPosts} 篇貼文、${s.newComments} 則留言，自動回覆 ${s.autoReplied} 則（平台回傳 ${s.fetched} 則留言${s.skippedOwn ? `，其中 ${s.skippedOwn} 則是帳號自己的留言已略過` : ''}${diag}）${s.remaining ? `。還有 ${s.remaining} 則較舊的留言尚未匯入，請再按一次「立即同步」` : ''}`, newPosts: s.newPosts, newComments: s.newComments, autoReplied: s.autoReplied };
     } catch (err) {
       await run(req.db, "UPDATE social_accounts SET status = 'error' WHERE id = ?", [id]);

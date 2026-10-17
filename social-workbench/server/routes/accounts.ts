@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import { z } from 'zod';
-import { all, get, insert, sqlIn, tx, updateById, type DB } from '../db';
+import { all, get, insert, run, sqlIn, tx, updateById, type DB } from '../db';
 import { authed, requirePermission } from '../auth/middleware';
 import { resolveBrandFilter, type BrandScope } from '../auth/scope';
 import type { AuthUser } from '../auth/session';
@@ -348,6 +348,43 @@ export function accountRoutes(): Router {
     const result = await testAndRecord(db, await loadAccount(db, scope, id), user);
     const body: TestConnectionResponse = { ...result, account: toAccount(await loadAccount(db, scope, id)) };
     res.json(body);
+  });
+
+  // 移到其他品牌：帳號連同貼文、留言、回覆與相關紀錄一起搬，品牌資料不會混在一起（操作紀錄保留原樣）
+  r.post('/:id/move', requirePermission('manageAccounts'), async (req, res) => {
+    const { user, scope } = authed(req);
+    const db = req.db;
+    const row = await loadAccount(db, scope, parseId(req.params.id));
+    const brandId = Number((req.body as { brandId?: unknown })?.brandId);
+    if (!Number.isSafeInteger(brandId) || brandId <= 0) throw badRequest('請選擇要移到哪個品牌');
+    if (brandId === row.brand_id) throw badRequest('帳號已經在這個品牌');
+    const target = await get<{ id: number; name: string; is_active: number }>(db, `SELECT id, name, is_active FROM brands WHERE id = ? AND ${sqlIn('id', scope.brandIds)}`, [brandId]);
+    if (!target) throw notFound('找不到品牌');
+    if (target.is_active !== 1) throw badRequest('目標品牌已停用');
+    await tx(db, async () => {
+      const ofAccount = '(SELECT id FROM comments WHERE social_account_id = ?)';
+      for (const t of ['assignments', 'internal_notes', 'notifications', 'ai_analyses', 'ai_suggestions', 'replies', 'comment_actions']) {
+        await run(db, `UPDATE ${t} SET brand_id = ? WHERE comment_id IN ${ofAccount}`, [brandId, row.id]);
+      }
+      await run(db, 'UPDATE comment_groups SET brand_id = ? WHERE post_id IN (SELECT id FROM posts WHERE social_account_id = ?)', [brandId, row.id]);
+      await run(db, 'UPDATE comments SET brand_id = ? WHERE social_account_id = ?', [brandId, row.id]);
+      await run(db, 'UPDATE posts SET brand_id = ? WHERE social_account_id = ?', [brandId, row.id]);
+      await run(db, 'UPDATE social_accounts SET brand_id = ?, updated_at = ? WHERE id = ?', [brandId, nowIso(), row.id]);
+      for (const b of [row.brand_id, brandId]) {
+        await audit(db, {
+          actorType: 'user',
+          actorUserId: user.id,
+          brandId: b,
+          action: 'account.move',
+          targetType: 'social_account',
+          targetId: row.id,
+          summary: `${user.name} 將社群帳號「${row.name}」從「${row.brand_name}」移到「${target.name}」`,
+          before: { brandId: row.brand_id },
+          after: { brandId },
+        });
+      }
+    });
+    res.json(toAccount(await loadAccount(db, scope, row.id)));
   });
 
   return r;

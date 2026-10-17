@@ -79,6 +79,7 @@ export default function AccountsPage() {
   const [addOpen, setAddOpen] = useState(false);
   const [editing, setEditing] = useState<SocialAccount | null>(null);
   const [deactivating, setDeactivating] = useState<SocialAccount | null>(null);
+  const [moving, setMoving] = useState<SocialAccount | null>(null);
   const [togglingId, setTogglingId] = useState<number | null>(null);
   const [testingIds, setTestingIds] = useState<ReadonlySet<number>>(new Set());
 
@@ -251,6 +252,9 @@ export default function AccountsPage() {
                               <Button size="sm" variant="ghost" icon={<IconEdit />} onClick={() => setEditing(a)}>
                                 編輯
                               </Button>
+                              <Button size="sm" variant="ghost" onClick={() => setMoving(a)}>
+                                移到其他品牌
+                              </Button>
                               {a.isActive ? (
                                 <Button size="sm" variant="ghost" onClick={() => setDeactivating(a)}>
                                   停用
@@ -327,6 +331,7 @@ export default function AccountsPage() {
         />
       )}
 
+      {moving && <MoveModal account={moving} onClose={() => setMoving(null)} onMoved={() => { setMoving(null); void reload(); }} />}
       <ConfirmDialog
         open={!!deactivating}
         title={deactivating ? `停用「${deactivating.name}」？` : '停用社群帳號'}
@@ -631,10 +636,69 @@ function EditAccountModal({
             <TextInput id="acc-edit-handle" value={handle} maxLength={60} onChange={(e) => setHandle(e.target.value)} />
           </Field>
           <p className="muted small">
-            品牌、平台、帳號類型與平台帳號 ID 建立後不可更改，以免不同品牌的留言與紀錄混在一起。一個平台帳號只能屬於一個品牌；如需改用其他平台帳號，請停用此帳號後新增新的帳號。
+            平台、帳號類型與平台帳號 ID 建立後不可更改；要換品牌請用列表上的「移到其他品牌」，留言與紀錄會一起搬過去。一個平台帳號只能屬於一個品牌；如需改用其他平台帳號，請停用此帳號後新增新的帳號。
           </p>
         </div>
       </form>
+    </Modal>
+  );
+}
+
+// ---------------- 移到其他品牌 ----------------
+function MoveModal({ account, onClose, onMoved }: { account: SocialAccount; onClose: () => void; onMoved: () => void }) {
+  const { activeBrands } = useBrandScope();
+  const toast = useToast();
+  const options = activeBrands.filter((b) => b.id !== account.brandId);
+  const [brandId, setBrandId] = useState<number>(options[0]?.id ?? 0);
+  const [busy, setBusy] = useState(false);
+  const target = options.find((b) => b.id === brandId);
+  const submit = async () => {
+    setBusy(true);
+    try {
+      await api.post(`/accounts/${account.id}/move`, { brandId });
+      toast.success(`已將「${account.name}」移到「${target?.name ?? ''}」`);
+      onMoved();
+    } catch (err) {
+      toast.error(errorMessage(err));
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <Modal
+      open
+      title={`把「${account.name}」移到其他品牌`}
+      onClose={onClose}
+      size="sm"
+      footer={
+        <>
+          <Button onClick={onClose} disabled={busy}>
+            取消
+          </Button>
+          <Button variant="primary" loading={busy} disabled={!target} onClick={() => void submit()}>
+            移動
+          </Button>
+        </>
+      }
+    >
+      {options.length === 0 ? (
+        <Alert tone="info">沒有其他可以移入的品牌。請先到「品牌管理」新增品牌（例如美髮店），再回來移動。</Alert>
+      ) : (
+        <div className="stack">
+          <p style={{ margin: 0 }}>
+            目前屬於「{account.brandName}」。移動後，這個帳號的貼文、留言、回覆與紀錄都會改屬新品牌，並改用新品牌的 AI 回覆風格、知識庫與自動回覆規則。
+          </p>
+          <Field label="移到品牌">
+            <Select value={brandId} onChange={(e) => setBrandId(Number(e.target.value))}>
+              {options.map((b) => (
+                <option key={b.id} value={b.id}>
+                  {b.name}
+                </option>
+              ))}
+            </Select>
+          </Field>
+        </div>
+      )}
     </Modal>
   );
 }

@@ -122,6 +122,26 @@ describe('Facebook 粉絲專頁串接', () => {
     expect(await get(ctx.db, "SELECT id FROM comments WHERE external_id = 'c-new'")).toBeTruthy();
   });
 
+  it('粉專可以移到其他品牌：貼文、留言、AI 判斷一起搬，之後改用新品牌的設定', async () => {
+    const ctx = await createTestContext();
+    const api = fakeFacebook();
+    api.comments.push({ id: 'cm', message: '請問燙髮多少錢？', created_time: ago(30), from: { id: 'u1', name: '小美' } });
+    const { admin } = await connect(ctx);
+    const acc = (await get<{ id: number }>(ctx.db, "SELECT id FROM social_accounts WHERE platform = 'facebook' AND external_id = ?", [PAGE]))!;
+    const sup = await ctx.loginAs('sup'); // 主管沒有品牌乙的權限
+    expect((await sup.post(`/api/accounts/${acc.id}/move`).send({ brandId: ctx.fx.brandB })).status).toBeGreaterThanOrEqual(400);
+    const res = await admin.post(`/api/accounts/${acc.id}/move`).send({ brandId: ctx.fx.brandB });
+    expect(res.status).toBe(200);
+    expect(res.body.brandId).toBe(ctx.fx.brandB);
+    const c = await get<{ id: number; brand_id: number }>(ctx.db, "SELECT id, brand_id FROM comments WHERE external_id = 'cm'");
+    expect(c?.brand_id).toBe(ctx.fx.brandB);
+    expect((await get<{ brand_id: number }>(ctx.db, 'SELECT brand_id FROM ai_analyses WHERE comment_id = ?', [c!.id]))?.brand_id).toBe(ctx.fx.brandB);
+    expect((await all(ctx.db, 'SELECT id FROM posts WHERE social_account_id = ? AND brand_id <> ?', [acc.id, ctx.fx.brandB])).length).toBe(0);
+    // 品牌甲的人看不到了；重新連結到品牌甲會被擋下（已屬於品牌乙）
+    const opA = await ctx.loginAs('opA');
+    expect((await opA.get(`/api/comments/${c!.id}`)).status).toBe(404);
+  });
+
   it('同一個粉專不能同時屬於兩個品牌', async () => {
     const ctx = await createTestContext();
     fakeFacebook();

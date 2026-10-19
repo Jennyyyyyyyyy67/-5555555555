@@ -36,7 +36,7 @@ import type {
   SocialAccount,
   TestConnectionResponse,
 } from '../../../../shared/types';
-import { FacebookConnect, InstagramConnect } from './InstagramConnect';
+import { FacebookConnect, GoogleBusinessConnect, InstagramConnect, YoutubeConnect } from './InstagramConnect';
 import './accounts.css';
 
 const STATUS_TONE: Record<AccountStatus, BadgeTone> = { connected: 'green', disconnected: 'gray', error: 'red' };
@@ -130,7 +130,7 @@ export default function AccountsPage() {
     <>
       <PageHeader
         title="社群帳號"
-        description="各品牌綁定的社群平台帳號。Instagram 帳號與 Facebook 粉專可連結真實帳號；其他平台與示範帳號目前透過「模擬連線」運作，日後串接時只需替換該平台的 adapter。"
+        description="各品牌綁定的社群平台帳號。Instagram、Facebook 粉專、YouTube 頻道、Google 商家都可以連結真實帳號；示範帳號透過「模擬連線」運作。"
         actions={
           canManage && (
             <Button variant="primary" icon={<IconPlus />} onClick={() => setAddOpen(true)}>
@@ -145,6 +145,8 @@ export default function AccountsPage() {
 
         <InstagramConnect onChanged={() => void reload()} />
         <FacebookConnect onChanged={() => void reload()} />
+        <YoutubeConnect onChanged={() => void reload()} />
+        <GoogleBusinessConnect onChanged={() => void reload()} />
 
         <div className="toolbar">
           <Select aria-label="篩選平台" value={platformFilter} onChange={(e) => setPlatformFilter(e.target.value)}>

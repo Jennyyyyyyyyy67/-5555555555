@@ -2,6 +2,8 @@ import type { PlatformAdapter } from './types';
 import { createMockAdapter } from './mock/createMockAdapter';
 import { createInstagramAdapter } from './instagram';
 import { createFacebookAdapter } from './facebook';
+import { createYoutubeAdapter } from './youtube';
+import { createGoogleBusinessAdapter } from './googleBusiness';
 import type { PlatformMeta } from '../../shared/types';
 
 // 各平台的帳號類型與可用動作。能力設定參考各平台公開 API 的實際限制：
@@ -40,7 +42,7 @@ const instagram = createInstagramAdapter(createMockAdapter({
   ],
 }));
 
-const youtube = createMockAdapter({
+const youtube = createYoutubeAdapter(createMockAdapter({
   platform: 'youtube',
   label: 'YouTube',
   accountTypes: [
@@ -51,9 +53,9 @@ const youtube = createMockAdapter({
       capabilities: { reply: true, like: false, hide: true, delete: true, block: true },
     },
   ],
-});
+}));
 
-const google = createMockAdapter({
+const google = createGoogleBusinessAdapter(createMockAdapter({
   platform: 'google',
   label: 'Google 商家',
   accountTypes: [
@@ -64,7 +66,7 @@ const google = createMockAdapter({
       capabilities: { reply: true, like: false, hide: false, delete: false, block: false },
     },
   ],
-});
+}));
 
 const adapters = new Map<string, PlatformAdapter>();
 

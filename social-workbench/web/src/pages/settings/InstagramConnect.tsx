@@ -1,4 +1,4 @@
-// 社群帳號頁上方：連結真實平台帳號（Instagram 帳號、Facebook 粉絲專頁）、立即同步、中斷連結。
+// 社群帳號頁上方：連結真實平台帳號（Instagram、Facebook 粉專、YouTube 頻道、Google 商家）、立即同步、中斷連結。
 import { useEffect, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { useAuth } from '../../auth/AuthContext';
@@ -30,8 +30,14 @@ function CopyField({ label, value }: { label: string; value: string }) {
   );
 }
 
+type ProviderKey = 'instagram' | 'facebook' | 'youtube' | 'google_business';
+
 interface ProviderConfig {
-  key: 'instagram' | 'facebook';
+  key: ProviderKey;
+  /** 圖示用的平台代碼 */
+  platform: string;
+  /** 平台名稱（提示文字用） */
+  name: string;
   title: string;
   connectLabel: string;
   connectHint: string;
@@ -45,9 +51,11 @@ interface ProviderConfig {
   howItWorks: string[];
 }
 
-const PROVIDERS: Record<'instagram' | 'facebook', ProviderConfig> = {
+const PROVIDERS: Record<ProviderKey, ProviderConfig> = {
   instagram: {
     key: 'instagram',
+    platform: 'instagram',
+    name: 'Instagram',
     title: '真實 Instagram 帳號',
     connectLabel: '連結 Instagram 帳號',
     connectHint: '需使用 Instagram 專業帳號（商業或創作者）登入。',
@@ -69,6 +77,8 @@ const PROVIDERS: Record<'instagram' | 'facebook', ProviderConfig> = {
   },
   facebook: {
     key: 'facebook',
+    platform: 'facebook',
+    name: 'Facebook',
     title: '真實 Facebook 粉絲專頁',
     connectLabel: '連結 Facebook 粉專',
     connectHint: '用管理粉專的 Facebook 帳號登入，並在授權畫面勾選要連結的粉專（可以一次選多個）。',
@@ -92,9 +102,59 @@ const PROVIDERS: Record<'instagram' | 'facebook', ProviderConfig> = {
       '沒有通過 Meta 審查前，只有應用程式的管理員、開發者或測試人員可以連結粉專；留言者名稱可能顯示為「Facebook 使用者」。',
     ],
   },
+  youtube: {
+    key: 'youtube',
+    platform: 'youtube',
+    name: 'YouTube',
+    title: '真實 YouTube 頻道',
+    connectLabel: '連結 YouTube 頻道',
+    connectHint: '用管理頻道的 Google 帳號登入；頻道屬於品牌帳戶時，登入後請選擇該頻道。',
+    envHint: '請先在 Google Cloud 建立專案、啟用 YouTube Data API v3，並在 Vercel 設定環境變數 GOOGLE_CLIENT_ID、GOOGLE_CLIENT_SECRET（詳細步驟見專案說明文件「Google 串接教學」）。',
+    emptyText: '還沒有連結任何 YouTube 頻道。',
+    display: (n) => n,
+    readResult: (p) =>
+      p.get('yt') === 'connected'
+        ? { tone: 'success', text: `已連結 YouTube 頻道「${p.get('channel') ?? ''}」，並匯入 ${p.get('imported') ?? 0} 則現有留言（舊留言不會自動回覆）。` }
+        : p.get('yt_error')
+          ? { tone: 'danger', text: p.get('yt_error')! }
+          : null,
+    resultKeys: ['yt', 'yt_error', 'channel', 'imported'],
+    howItWorks: [
+      '同步頻道所有影片（含 Shorts）最新的 100 串留言與回覆；YouTube 每天的免費 API 用量有限，因此每 5 分鐘自動同步一次，也可以按「立即同步」。',
+      '可以在工作台直接回覆；「隱藏」會把留言改為保留待審，「刪除」會移除留言，「封鎖」會移除並封鎖作者。YouTube API 不支援對留言按讚。',
+      '每次回覆或審核會用掉較多配額（每天約可回覆 150～190 則），一般店家很夠用。',
+    ],
+  },
+  google_business: {
+    key: 'google_business',
+    platform: 'google',
+    name: 'Google 商家',
+    title: '真實 Google 商家評論',
+    connectLabel: '連結 Google 商家',
+    connectHint: '用商家檔案擁有者或管理員的 Google 帳號登入，帳號底下的所有商家地點都會連結到這個品牌。',
+    envHint: '請先在 Google Cloud 建立專案、啟用 Google 商家檔案相關 API 並申請使用權限，再在 Vercel 設定環境變數 GOOGLE_CLIENT_ID、GOOGLE_CLIENT_SECRET（詳細步驟見專案說明文件「Google 串接教學」）。',
+    emptyText: '還沒有連結任何 Google 商家。',
+    display: (n) => n,
+    readResult: (p) => {
+      if (p.get('gb') === 'connected') {
+        const skipped = p.get('gb_skipped');
+        return {
+          tone: skipped ? 'warning' : 'success',
+          text: `已連結 Google 商家「${p.get('locations') ?? ''}」，並匯入 ${p.get('imported') ?? 0} 則現有評論（舊評論不會自動回覆）。${skipped ? `另外：${skipped}` : ''}`,
+        };
+      }
+      return p.get('gb_error') ? { tone: 'danger', text: p.get('gb_error')! } : null;
+    },
+    resultKeys: ['gb', 'gb_error', 'gb_skipped', 'locations', 'imported'],
+    howItWorks: [
+      '每 10 分鐘自動同步最新的評論（含星等），也可以按「立即同步」；在平台上已回覆過的評論會直接標示完成。',
+      '可以在工作台直接回覆評論；每則評論只會有一個商家回覆，再次回覆會取代原本的內容。Google 不允許隱藏或刪除顧客評論。',
+      'Google 需要先核准商家檔案 API 的使用申請（免費），核准前同步會顯示配額不足的錯誤。',
+    ],
+  },
 };
 
-function LiveConnect({ provider, onChanged }: { provider: 'instagram' | 'facebook'; onChanged: () => void }) {
+function LiveConnect({ provider, onChanged }: { provider: ProviderKey; onChanged: () => void }) {
   const p = PROVIDERS[provider];
   const { can } = useAuth();
   const { activeBrands, currentBrand } = useBrandScope();
@@ -143,7 +203,7 @@ function LiveConnect({ provider, onChanged }: { provider: 'instagram' | 'faceboo
     <Card
       title={
         <h2 className="row" style={{ gap: 8 }}>
-          <PlatformIcon platform={provider} size={20} /> {p.title}
+          <PlatformIcon platform={p.platform} size={20} /> {p.title}
         </h2>
       }
     >
@@ -159,7 +219,7 @@ function LiveConnect({ provider, onChanged }: { provider: 'instagram' | 'faceboo
         ) : !s.configured ? (
           <Alert tone="warning">
             <div className="stack" style={{ gap: 6 }}>
-              <strong>尚未設定 {provider === 'instagram' ? 'Instagram' : 'Facebook'} 串接</strong>
+              <strong>尚未設定 {p.name} 串接</strong>
               <span>{p.envHint}</span>
               <CopyField label="OAuth 重新導向網址（貼到 Meta 後台）" value={s.redirectUri} />
             </div>
@@ -234,7 +294,7 @@ function LiveConnect({ provider, onChanged }: { provider: 'instagram' | 'faceboo
       </div>
       <ConfirmDialog
         open={!!disconnect}
-        title={`中斷 ${provider === 'instagram' ? 'Instagram' : 'Facebook'} 連結？`}
+        title={`中斷 ${p.name} 連結？`}
         message={`中斷後系統不會再抓取「${disconnect ? p.display(disconnect.username) : ''}」的留言，也無法回覆；已匯入的留言與紀錄會保留。之後可以重新連結。`}
         confirmText="中斷連結"
         danger
@@ -262,4 +322,12 @@ export function InstagramConnect({ onChanged }: { onChanged: () => void }) {
 
 export function FacebookConnect({ onChanged }: { onChanged: () => void }) {
   return <LiveConnect provider="facebook" onChanged={onChanged} />;
+}
+
+export function YoutubeConnect({ onChanged }: { onChanged: () => void }) {
+  return <LiveConnect provider="youtube" onChanged={onChanged} />;
+}
+
+export function GoogleBusinessConnect({ onChanged }: { onChanged: () => void }) {
+  return <LiveConnect provider="google_business" onChanged={onChanged} />;
 }

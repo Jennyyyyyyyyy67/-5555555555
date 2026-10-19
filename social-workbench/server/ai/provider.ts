@@ -1,19 +1,23 @@
-// AI 入口：有設定 ANTHROPIC_API_KEY 時用 Claude，否則（或 Claude 暫時無法使用時）用模擬 AI（關鍵字規則）。
+// AI 入口：有設定 ANTHROPIC_API_KEY 時用 Claude；只設定 GEMINI_API_KEY 時，回覆建議用 Gemini（免費額度），留言分類仍用關鍵字規則以節省額度；
+// 都沒有設定（或 AI 暫時無法使用）時用模擬 AI。
 import type { DB } from '../db';
 import { all } from '../db';
 import { mockProvider } from './mockProvider';
 import { claudeAnalyze, claudeComposeVariants, claudeConfig, mergeAnalyses, type CategoryOption } from './claude';
+import { geminiConfig } from './gemini';
 import { composeVariants, type ComposedVariant, type ComposeInput } from './compose';
 import type { Analysis, AnalyzeInput } from './types';
 
 export interface AiStatus {
-  provider: 'claude' | 'mock';
+  provider: 'claude' | 'gemini' | 'mock';
   model: string | null;
 }
 
 export function aiStatus(): AiStatus {
   const c = claudeConfig();
-  return c.enabled ? { provider: 'claude', model: c.model } : { provider: 'mock', model: null };
+  if (c.enabled) return { provider: 'claude', model: c.model };
+  const g = geminiConfig();
+  return g.enabled ? { provider: 'gemini', model: g.model } : { provider: 'mock', model: null };
 }
 
 async function activeCategories(db: DB): Promise<CategoryOption[]> {
@@ -38,11 +42,12 @@ export async function analyzeComment(db: DB, input: AnalyzeInput, opts: { fast?:
 
 /** 產生多版本回覆建議：Claude 失敗時改用範本產生（不編造事實） */
 export async function composeReplies(input: ComposeInput & { authorName?: string; postContext?: string }): Promise<{ variants: ComposedVariant[]; provider: string }> {
-  if (claudeConfig().enabled) {
+  const which = aiStatus().provider;
+  if (which !== 'mock') {
     try {
-      return { variants: await claudeComposeVariants(input), provider: 'claude' };
+      return { variants: await claudeComposeVariants(input), provider: which };
     } catch (err) {
-      console.warn('[ai] Claude 產生回覆失敗，改用範本：', (err as Error).message);
+      console.warn(`[ai] ${which} 產生回覆失敗，改用範本：`, (err as Error).message);
     }
   }
   return { variants: composeVariants(input), provider: 'mock' };

@@ -114,8 +114,10 @@ export default function StylePage() {
       />
       {meta?.ai.provider === 'claude' ? (
         <Alert tone="success">目前使用真正的 AI（Claude，模型 {meta.ai.model}）判斷留言與產生回覆；事實內容只會引用知識庫，送出前仍會檢查。</Alert>
+      ) : meta?.ai.provider === 'gemini' ? (
+        <Alert tone="success">回覆建議使用 Google Gemini 免費額度（模型 {meta.ai.model}）依品牌風格、回覆範例與類型語氣撰寫；留言分類仍用關鍵字規則。免費額度用完時會自動改用範本，隔天恢復。</Alert>
       ) : meta ? (
-        <Alert tone="info">目前使用模擬 AI（關鍵字規則與範本）。在 Vercel 設定 ANTHROPIC_API_KEY 後，會改用 Claude 依品牌風格寫回覆。</Alert>
+        <Alert tone="info">目前使用模擬 AI（關鍵字規則與範本）。在 Vercel 設定 GEMINI_API_KEY（免費）或 ANTHROPIC_API_KEY（付費）後，AI 會依品牌風格寫回覆。</Alert>
       ) : null}
       {!editable && <Alert>你可以檢視與預覽；只有管理員可以修改。</Alert>}
       {error ? (

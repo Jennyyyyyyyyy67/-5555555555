@@ -6,6 +6,8 @@ import { syncAccountDetailed, type SyncSummary } from './pipeline';
 
 /** 收件匣多久自動向平台同步一次 */
 export const AUTO_SYNC_SECONDS = 45;
+/** Google（YouTube、商家評論）每天的免費 API 配額有限，自動同步的間隔拉長；手動「立即同步」不受限制 */
+const SLOW_SYNC_SECONDS: Record<string, number> = { youtube: 300, google_business: 600 };
 
 async function safeSync(db: DB, accountId: number): Promise<SyncSummary | null> {
   try {
@@ -24,12 +26,16 @@ async function safeSync(db: DB, accountId: number): Promise<SyncSummary | null> 
 export async function autoSyncLive(db: DB, brandIds: number[]): Promise<{ synced: number; newComments: number }> {
   if (brandIds.length === 0) return { synced: 0, newComments: 0 };
   const cutoff = new Date(Date.now() - AUTO_SYNC_SECONDS * 1000).toISOString();
-  const due = await all<{ id: number }>(
+  const rows = await all<{ id: number; provider: string; last_synced_at: string | null }>(
     db,
-    `SELECT a.id FROM social_accounts a JOIN account_credentials c ON c.account_id = a.id
+    `SELECT a.id, c.provider, a.last_synced_at FROM social_accounts a JOIN account_credentials c ON c.account_id = a.id
      WHERE a.is_active = 1 AND ${sqlIn('a.brand_id', brandIds)} AND (a.last_synced_at IS NULL OR a.last_synced_at < ?)`,
     [cutoff],
   );
+  const due = rows.filter((r) => {
+    const slow = SLOW_SYNC_SECONDS[r.provider];
+    return !slow || !r.last_synced_at || Date.parse(r.last_synced_at) < Date.now() - slow * 1000;
+  });
   if (due.length === 0) return { synced: 0, newComments: 0 };
   // 先標記時間，避免多個同時的請求重複同步
   await run(db, `UPDATE social_accounts SET last_synced_at = ? WHERE ${sqlIn('id', due.map((d) => d.id))}`, [nowIso()]);

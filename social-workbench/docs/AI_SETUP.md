@@ -25,3 +25,29 @@
 ## 費用參考
 
 每則留言判斷約 1 次 API 呼叫，產生回覆建議約 1 次。實際費用依留言長度與模型而定，可在 Anthropic Console 的 Usage 頁查看。
+
+---
+
+# 免費方案：Google Gemini
+
+不想付費的話，可以用 Google Gemini 的免費額度產生回覆建議。
+
+## 設定步驟
+
+1. 打開 <https://aistudio.google.com/>，用 Google 帳號登入。
+2. 左側「Get API key」→「Create API key」→ 選剛剛的 Google Cloud 專案（或建立新的）→ 複製金鑰。**不需要綁信用卡。**
+3. Vercel → Environment Variables 新增：
+
+| Key | Value | 說明 |
+|---|---|---|
+| `GEMINI_API_KEY` | 剛剛的金鑰（Type 選 Secret） | 必填 |
+| `GEMINI_MODEL` | 例如 `gemini-flash-latest` | 選填；預設為 Google 最新的 Flash 模型 |
+
+4. Deployments → Redeploy。「AI 回覆風格」頁上方會顯示「回覆建議使用 Google Gemini 免費額度」。
+
+## 和 Claude 的差別
+
+- **Gemini 只負責寫回覆建議**：會依照品牌風格、回覆範例、類型語氣、知識庫寫回覆。留言分類仍用關鍵字規則，以節省免費額度。
+- **額度有限**：每天可用的次數由 Google 決定，可在 AI Studio 查看。用完時會自動改用範本回覆，隔天恢復。
+- **隱私**：Google 免費方案可能會用送出的內容改善服務。網站的隱私權政策已經寫明。
+- **同時設定兩者時**：同時有 `ANTHROPIC_API_KEY` 時，一律優先使用 Claude。

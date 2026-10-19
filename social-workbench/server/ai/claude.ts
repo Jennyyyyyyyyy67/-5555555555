@@ -1,10 +1,12 @@
 // 真正的 AI：用 Claude 判斷留言、產生回覆建議。
 // 設定 ANTHROPIC_API_KEY 才會啟用；沒有設定或呼叫失敗時，自動退回模擬 AI（關鍵字規則），網站不會因此停擺。
+// 沒有 Claude、但設定了 GEMINI_API_KEY（Google 免費額度）時，回覆建議改用 Gemini，提示詞與檢查完全相同。
 // 不可妥協的原則仍由 safety.ts 的程式檢查強制執行，Claude 的判斷只是其中一個參考，不能放寬安全檢查。
 import Anthropic from '@anthropic-ai/sdk';
 import { RISK_FLAGS, RISK_LEVELS, PRIORITIES, SENTIMENTS, type Priority, type RiskFlag, type RiskLevel, type Sentiment } from '../../shared/constants';
 import type { Analysis, AnalyzeInput } from './types';
 import type { ComposedVariant, ComposeInput } from './compose';
+import { geminiConfig, geminiJson } from './gemini';
 
 /** 預設模型；可用環境變數 AI_MODEL 改成其他 Claude 模型（例如 claude-haiku-5-5 較快、較便宜） */
 export const DEFAULT_AI_MODEL = 'claude-opus-5-5';
@@ -35,10 +37,17 @@ export function setClaudeCaller(fn: JsonCaller | null): void {
 
 export class ClaudeUnavailableError extends Error {}
 
-/** 呼叫 Claude 並取得符合 JSON Schema 的結果 */
+/** 呼叫 Claude（沒有設定時改用 Gemini）並取得符合 JSON Schema 的結果 */
 async function callJson(system: string, user: string, schema: Record<string, unknown>, maxTokens: number): Promise<{ data: unknown; model: string }> {
   if (callerOverride) return callerOverride({ system, user, schema, maxTokens });
-  const { model } = claudeConfig();
+  const { model, enabled } = claudeConfig();
+  if (!enabled && geminiConfig().enabled) {
+    try {
+      return await geminiJson(system, user, schema, maxTokens);
+    } catch (err) {
+      throw new ClaudeUnavailableError((err as Error).message);
+    }
+  }
   const response = await getClient().beta.messages.create({
     model,
     max_tokens: maxTokens,

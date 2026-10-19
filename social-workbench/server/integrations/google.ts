@@ -51,6 +51,9 @@ function explain(status: number, body: GoogleErrorBody | null, service: string):
   const raw = e?.message ?? `HTTP ${status}`;
   let msg = `${service} 回應錯誤：${raw}`;
   if (status === 401) msg = 'Google 授權已失效，請到「社群帳號」重新連結';
+  // 商家檔案 API 未核准前配額為 0，看起來和「用量已達上限」相同
+  else if ((reason === 'quotaExceeded' || reason === 'RESOURCE_EXHAUSTED' || status === 429) && service === 'Google 商家檔案')
+    msg = 'Google 商家檔案 API 的配額不足：如果還沒向 Google 送出「商家檔案 API 使用申請」，核准前配額都是 0，請先申請（詳見 Google 串接教學）；已核准的話請稍後再試';
   else if (reason === 'quotaExceeded' || reason === 'RESOURCE_EXHAUSTED' || status === 429) msg = `${service} 今天的 API 用量已達上限，明天會自動恢復（或到 Google Cloud 申請提高配額）`;
   else if (reason === 'SERVICE_DISABLED' || reason === 'accessNotConfigured' || /has not been used|is disabled/i.test(raw)) msg = `${service} API 尚未在 Google Cloud 專案啟用：${raw}`;
   else if (reason === 'commentsDisabled') msg = '這部影片關閉了留言功能';

@@ -1,6 +1,6 @@
 import type { ReactNode } from 'react';
 import type { Permission } from '../../../shared/permissions';
-import { IconAlert, IconBolt, IconBulb, IconChart, IconHistory, IconLayers, IconReport, IconBook, IconSparkle, IconBuilding, IconClock, IconDatabase, IconInbox, IconLink, IconUsers } from '../components/icons';
+import { IconAlert, IconBolt, IconBulb, IconChart, IconHistory, IconLayers, IconReport, IconBook, IconSparkle, IconBuilding, IconClock, IconDatabase, IconInbox, IconLink, IconUsers, IconChat } from '../components/icons';
 
 export interface NavItem {
   to: string;
@@ -27,6 +27,7 @@ export const NAV_SECTIONS: NavSection[] = [
     title: 'AI 與自動化',
     items: [
       { to: '/knowledge', label: '知識庫', icon: <IconBook /> },
+      { to: '/library', label: '回覆範本', icon: <IconChat /> },
       { to: '/settings/style', label: 'AI 回覆風格', icon: <IconSparkle />, perm: 'viewAccounts' },
       { to: '/automation', label: '自動回覆', icon: <IconBolt />, perm: 'testAutomation' },
     ],

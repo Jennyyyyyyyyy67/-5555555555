@@ -378,6 +378,8 @@ export type ThreadEntry =
       sentAt: string;
       senderName: string | null;
       source: string;
+      /** 這則回覆是否已收錄為回覆範例（null 代表尚未收錄） */
+      exampleStatus: ReplyExampleStatus | null;
     };
 
 export interface ReplyEntry {
@@ -480,6 +482,8 @@ export interface ReplyInput {
   statusAfter: 'waiting' | 'done';
   /** 採用（或修改自）哪一則 AI 建議 */
   suggestionId?: number | null;
+  /** 使用哪一則標準回覆 */
+  cannedReplyId?: number | null;
   /** 已看過送出前檢查的提醒，仍要送出 */
   confirmWarnings?: boolean;
 }
@@ -518,6 +522,8 @@ export interface BrandCategorySetting {
   slaMinutes: number | null;
   slaEnabled: boolean;
   handlingMode: HandlingMode;
+  /** 品牌對這類留言的語氣與處理指引（AI 產生回覆時參考） */
+  toneNote: string;
 }
 
 // ---------- 模擬器 ----------
@@ -826,6 +832,8 @@ export interface SuggestionSet {
   variants: SuggestionVariant[];
   /** 給小編的提醒（例如：知識不足、已略過活潑版） */
   notes: string[];
+  /** 這類留言的品牌回覆範例（AI 也會參考） */
+  examples: ReplyExample[];
 }
 
 export interface SuggestionsResponse {
@@ -1187,4 +1195,62 @@ export interface AuditQueryResponse {
   total: number;
   page: number;
   pageSize: number;
+}
+
+// ---------- 標準回覆與回覆範例 ----------
+export interface CannedReply {
+  id: number;
+  brandId: number;
+  brandName: string;
+  categoryId: number | null;
+  categoryName: string | null;
+  title: string;
+  body: string;
+  isActive: boolean;
+  createdByName: string | null;
+  updatedAt: string;
+}
+
+export interface CannedReplyInput {
+  brandId: number;
+  categoryId: number | null;
+  title: string;
+  body: string;
+}
+
+export type ReplyExampleStatus = 'active' | 'pending' | 'rejected' | 'inactive';
+
+export interface ReplyExample {
+  id: number;
+  brandId: number;
+  brandName: string;
+  categoryId: number | null;
+  categoryName: string | null;
+  scenario: string;
+  sampleComment: string;
+  goodReply: string;
+  badReply: string;
+  notes: string;
+  status: ReplyExampleStatus;
+  source: 'manual' | 'from_reply';
+  sourceReplyId: number | null;
+  submittedByName: string | null;
+  approvedByName: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ReplyExampleInput {
+  brandId: number;
+  categoryId: number | null;
+  scenario: string;
+  sampleComment: string;
+  goodReply: string;
+  badReply: string;
+  notes: string;
+}
+
+export interface ReplyExampleListResponse {
+  items: ReplyExample[];
+  counts: Record<ReplyExampleStatus | 'all', number>;
 }

@@ -40,3 +40,16 @@
     position: static;
   }
 }
+
+/* 依留言類型調整語氣 */
+.st-tones {
+  margin-top: 16px;
+}
+.st-tone-grid {
+  border: 0;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: 12px;
+}

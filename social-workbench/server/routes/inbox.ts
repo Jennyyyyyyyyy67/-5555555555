@@ -25,6 +25,7 @@ import { adapterAccountFor } from '../services/credentials';
 import { checkReply } from '../ai/compose';
 import { markDeleted } from '../services/pipeline';
 import { can } from '../../shared/permissions';
+import { loadCanned } from './library';
 import {
   COMMENT_STATUSES,
   HIGH_RISK_ACTIONS,
@@ -45,6 +46,7 @@ import {
   type InboxResponse,
   type InboxTab,
   type NotificationsResponse,
+  type ReplyExampleStatus,
 } from '../../shared/types';
 
 const OPEN_TODO = "('pending','in_progress','transferred')";
@@ -198,9 +200,11 @@ export async function buildDetail(db: DB, user: AuthUser, scope: BrandScope, id:
     [root, root],
   );
   const ids = threadComments.map((t) => t.id);
-  const threadReplies = await all<{ id: number; comment_id: number; body: string; sent_at: string; sender_name: string | null; source: string }>(
+  const threadReplies = await all<{ id: number; comment_id: number; body: string; sent_at: string; sender_name: string | null; source: string; example_status: ReplyExampleStatus | null }>(
     db,
-    `SELECT r.id, r.comment_id, r.body, r.sent_at, u.name AS sender_name, r.source FROM replies r LEFT JOIN users u ON u.id = r.sent_by_id
+    `SELECT r.id, r.comment_id, r.body, r.sent_at, u.name AS sender_name, r.source,
+       (SELECT e.status FROM reply_examples e WHERE e.source_reply_id = r.id ORDER BY e.id DESC LIMIT 1) AS example_status
+     FROM replies r LEFT JOIN users u ON u.id = r.sent_by_id
      WHERE ${sqlIn('r.comment_id', ids)} AND r.delivery_status = 'sent' ORDER BY r.sent_at, r.id`,
   );
   const thread: CommentDetail['thread'] = [
@@ -216,7 +220,7 @@ export async function buildDetail(db: DB, user: AuthUser, scope: BrandScope, id:
       visibility: t.visibility,
       isCurrent: t.id === id,
     })),
-    ...threadReplies.map((r) => ({ kind: 'reply' as const, id: r.id, commentId: r.comment_id, body: r.body, sentAt: r.sent_at, senderName: r.sender_name, source: r.source })),
+    ...threadReplies.map((r) => ({ kind: 'reply' as const, id: r.id, commentId: r.comment_id, body: r.body, sentAt: r.sent_at, senderName: r.sender_name, source: r.source, exampleStatus: r.example_status })),
   ].sort((a, b) => (a.kind === 'comment' ? a.occurredAt : a.sentAt).localeCompare(b.kind === 'comment' ? b.occurredAt : b.sentAt));
 
   const replies = (
@@ -385,6 +389,8 @@ export interface DeliverInput {
   body: string;
   statusAfter: 'waiting' | 'done';
   suggestionId?: number | null;
+  /** 使用的標準回覆（已確認屬於這個品牌） */
+  cannedReplyId?: number | null;
   /** 已由呼叫端檢查並經人工確認的提醒 */
   warnings: ReplyWarning[];
   /** 批次回覆：同一批的編號與數量（每則仍各自留下回覆與操作紀錄） */
@@ -410,6 +416,7 @@ export async function deliverReply(db: DB, user: AuthUser, scope: BrandScope, co
     : undefined;
   if (input.suggestionId && (!suggestion || suggestion.comment_id !== c.id)) throw badRequest('找不到這則 AI 建議，請重新產生');
   const edited = suggestion ? suggestion.body.trim() !== input.body.trim() : false;
+  const source = suggestion ? (edited ? 'ai_edited' : 'ai_adopted') : input.cannedReplyId ? 'canned' : 'manual';
   const post = (await get<{ external_id: string }>(db, 'SELECT external_id FROM posts WHERE id = ?', [c.post_id]))!;
   const adapter = getAdapter(account.platform);
   const sent = adapter
@@ -432,7 +439,7 @@ export async function deliverReply(db: DB, user: AuthUser, scope: BrandScope, co
       comment_id: c.id,
       brand_id: c.brand_id,
       body: input.body,
-      source: suggestion ? (edited ? 'ai_edited' : 'ai_adopted') : 'manual',
+      source,
       ai_suggestion_id: suggestion?.id ?? null,
       ai_original_body: suggestion?.body ?? null,
       was_edited: edited,
@@ -468,7 +475,7 @@ export async function deliverReply(db: DB, user: AuthUser, scope: BrandScope, co
       targetType: 'comment',
       targetId: c.id,
       assigneeIdAtTime: fresh.assignee_id ?? user.id,
-      summary: `${user.name} ${input.batch ? `批次（${input.batch.size} 則）` : ''}${suggestion ? (edited ? '修改 AI 建議後' : '採用 AI 建議') : ''}回覆留言，狀態改為「${STATUS_LABELS[input.statusAfter]}」${warnings.length ? `（已確認 ${warnings.length} 項提醒）` : ''}`,
+      summary: `${user.name} ${input.batch ? `批次（${input.batch.size} 則）` : ''}${suggestion ? (edited ? '修改 AI 建議後' : '採用 AI 建議') : input.cannedReplyId ? '使用標準回覆' : ''}回覆留言，狀態改為「${STATUS_LABELS[input.statusAfter]}」${warnings.length ? `（已確認 ${warnings.length} 項提醒）` : ''}`,
       before: { status: fresh.status },
       after: { status: input.statusAfter },
       detail: {
@@ -476,7 +483,7 @@ export async function deliverReply(db: DB, user: AuthUser, scope: BrandScope, co
         body: input.body,
         firstResponse: first,
         slaMet: first && slaRow?.sla_due_at ? now <= slaRow.sla_due_at : null,
-        source: suggestion ? (edited ? 'ai_edited' : 'ai_adopted') : 'manual',
+        source,
         suggestionId: suggestion?.id ?? null,
         confirmedWarnings: warnings.length ? warnings.map((w) => w.message) : undefined,
         batchId: input.batch?.id,
@@ -684,6 +691,7 @@ export function inboxRoutes(): Router {
     body: z.string().trim().min(1, '請輸入回覆內容').max(2000, '回覆最多 2000 個字'),
     statusAfter: z.enum(['waiting', 'done'], { errorMap: () => ({ message: '請選擇回覆後的狀態：等待對方或已完成' }) }),
     suggestionId: z.number().int().positive().nullable().optional(),
+    cannedReplyId: z.number().int().positive().nullable().optional(),
     confirmWarnings: z.boolean().optional(),
   });
   r.post('/:id/reply', async (req: Request, res: Response) => {
@@ -696,7 +704,8 @@ export function inboxRoutes(): Router {
     const blocking = warnings.filter((w) => w.level === 'block');
     if (blocking.length) throw new HttpError(422, 'reply_blocked', blocking.map((w) => w.message).join('；'), { warnings });
     if (warnings.length && !input.confirmWarnings) throw new HttpError(422, 'reply_warnings', '送出前請確認以下提醒', { warnings });
-    await deliverReply(db, user, scope, c.id, { body: input.body, statusAfter: input.statusAfter, suggestionId: input.suggestionId ?? null, warnings });
+    const canned = input.cannedReplyId && !input.suggestionId ? await loadCanned(db, [c.brand_id], input.cannedReplyId) : null;
+    await deliverReply(db, user, scope, c.id, { body: input.body, statusAfter: input.statusAfter, suggestionId: input.suggestionId ?? null, cannedReplyId: canned?.id ?? null, warnings });
     res.status(201).json(await buildDetail(db, user, scope, c.id));
   });
 

@@ -6,7 +6,7 @@ import { api, errorMessage } from '../../lib/api';
 import { formatDateTime } from '../../lib/format';
 import { useToast } from '../../components/Toast';
 import { Alert, Badge, Button, Card, ErrorMessage, Field, Loading, PageHeader, Select, Switch, TextInput, Textarea } from '../../components/ui';
-import type { BrandStyleInput, BrandStyleView, KnowledgeHit, SuggestionVariant } from '../../../../shared/types';
+import type { BrandCategorySetting, BrandStyleInput, BrandStyleView, KnowledgeHit, SuggestionVariant } from '../../../../shared/types';
 import { useMeta } from '../../lib/meta';
 import './style.css';
 
@@ -238,6 +238,91 @@ export default function StylePage() {
           </Card>
         </div>
       )}
+      {brandId > 0 && <CategoryTones key={brandId} brandId={brandId} editable={editable} />}
     </>
+  );
+}
+
+const TONE_PLACEHOLDERS: Record<string, string> = {
+  general: '例如：輕鬆、幽默、有溫度',
+  praise: '例如：熱情道謝，邀請再次光臨',
+  product_inquiry: '例如：清楚、專業、簡潔',
+  price_inquiry: '例如：直接回答價格，提醒以官網或門市公告為準',
+  complaint: '例如：認真、同理，不開玩笑；請對方私訊由專人處理',
+  negative_review: '例如：先致歉，不爭辯，引導私訊',
+  business_coop: '例如：專業有禮，請對方寄信並轉交窗口',
+};
+
+/** 依留言類型調整語氣：在品牌基本風格之外，針對不同類型給 AI 額外的語氣與處理指引 */
+function CategoryTones({ brandId, editable }: { brandId: number; editable: boolean }) {
+  const toast = useToast();
+  const [rows, setRows] = useState<BrandCategorySetting[] | null>(null);
+  const [notes, setNotes] = useState<Record<number, string>>({});
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<unknown>(null);
+  const load = async () => {
+    try {
+      const r = await api.get<BrandCategorySetting[]>(`/brands/${brandId}/category-settings`);
+      setRows(r);
+      setNotes(Object.fromEntries(r.map((x) => [x.categoryId, x.toneNote])));
+      setError(null);
+    } catch (err) {
+      setError(err);
+    }
+  };
+  useEffect(() => {
+    void load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [brandId]);
+  const changed = (rows ?? []).filter((x) => (notes[x.categoryId] ?? '').trim() !== x.toneNote);
+  const save = async () => {
+    setSaving(true);
+    try {
+      const r = await api.put<BrandCategorySetting[]>(`/brands/${brandId}/category-settings`, {
+        items: changed.map((x) => ({ categoryId: x.categoryId, slaMinutes: x.slaMinutes, slaEnabled: x.slaEnabled, toneNote: (notes[x.categoryId] ?? '').trim() })),
+      });
+      setRows(r);
+      setNotes(Object.fromEntries(r.map((x) => [x.categoryId, x.toneNote])));
+      toast.success('已儲存各類型的語氣指引');
+    } catch (err) {
+      toast.error(errorMessage(err));
+    } finally {
+      setSaving(false);
+    }
+  };
+  return (
+    <Card title="依留言類型調整語氣" className="st-tones">
+      <p className="muted small" style={{ marginTop: 0 }}>
+        在上方的品牌基本風格之外，可以針對不同類型的留言給 AI 額外指引，例如一般互動輕鬆幽默、客訴認真同理。留空代表沿用基本風格；客訴、敏感留言無論如何都不會使用開玩笑的語氣。
+      </p>
+      {error ? (
+        <ErrorMessage error={error} onRetry={() => void load()} />
+      ) : !rows ? (
+        <Loading />
+      ) : (
+        <fieldset disabled={!editable} className="st-tone-grid">
+          {rows
+            .filter((x) => x.categoryActive && !['spam', 'no_reply'].includes(x.key))
+            .map((x) => (
+              <Field key={x.categoryId} label={x.name}>
+                <Textarea
+                  rows={2}
+                  maxLength={300}
+                  value={notes[x.categoryId] ?? ''}
+                  placeholder={TONE_PLACEHOLDERS[x.key] ?? '留空代表沿用基本風格'}
+                  onChange={(e) => setNotes((n) => ({ ...n, [x.categoryId]: e.target.value }))}
+                />
+              </Field>
+            ))}
+        </fieldset>
+      )}
+      {editable && rows && (
+        <div className="row" style={{ justifyContent: 'flex-end', marginTop: 12 }}>
+          <Button variant="primary" disabled={changed.length === 0} loading={saving} onClick={() => void save()}>
+            儲存語氣指引{changed.length > 0 ? `（${changed.length}）` : ''}
+          </Button>
+        </div>
+      )}
+    </Card>
   );
 }

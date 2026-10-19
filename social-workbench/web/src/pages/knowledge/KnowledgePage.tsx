@@ -246,14 +246,22 @@ function SearchTester() {
   );
 }
 
-function KnowledgeModal({ item, approver, onClose, onSaved }: { item: KnowledgeItem | null; approver: boolean; onClose: () => void; onSaved: () => void }) {
+/** 從留言收件匣把人工答案存成知識時帶入的內容 */
+export interface KnowledgePreset {
+  brandId: number;
+  title: string;
+  content: string;
+  sourceCommentId: number;
+}
+
+export function KnowledgeModal({ item, preset, approver, onClose, onSaved }: { item: KnowledgeItem | null; preset?: KnowledgePreset; approver: boolean; onClose: () => void; onSaved: () => void }) {
   const { activeBrands, currentBrand } = useBrandScope();
   const toast = useToast();
   const [form, setForm] = useState({
-    brandId: item?.brandId ?? currentBrand?.id ?? activeBrands[0]?.id ?? 0,
+    brandId: item?.brandId ?? preset?.brandId ?? currentBrand?.id ?? activeBrands[0]?.id ?? 0,
     category: (item?.category ?? 'faq') as KnowledgeCategory,
-    title: item?.title ?? '',
-    content: item?.content ?? '',
+    title: item?.title ?? preset?.title ?? '',
+    content: item?.content ?? preset?.content ?? '',
     keywords: (item?.keywords ?? []).join('、'),
     validFrom: item?.validFrom ?? '',
     validTo: item?.validTo ?? '',
@@ -269,7 +277,7 @@ function KnowledgeModal({ item, approver, onClose, onSaved }: { item: KnowledgeI
     try {
       const body: Omit<KnowledgeInput, 'brandId'> = { category: form.category, title: form.title, content: form.content, keywords, validFrom: form.validFrom || null, validTo: form.validTo || null };
       if (item) await api.patch(`/knowledge/${item.id}`, { ...body, note: form.note || undefined });
-      else await api.post('/knowledge', { ...body, brandId: form.brandId });
+      else await api.post('/knowledge', { ...body, brandId: form.brandId, sourceCommentId: preset?.sourceCommentId ?? null });
       toast.success(item ? '已更新知識' : approver ? '已新增知識，AI 之後會引用' : '已送出，等待主管審核');
       onSaved();
     } catch (err) {
@@ -295,9 +303,10 @@ function KnowledgeModal({ item, approver, onClose, onSaved }: { item: KnowledgeI
     >
       <div className="stack">
         {error && <Alert tone="danger">{error}</Alert>}
+        {preset && <Alert>把這次人工處理的答案存成知識，之後遇到相同問題 AI 就能引用。請改成可以公開回覆給所有顧客的寫法，並填上客人會用的關鍵字。</Alert>}
         <div className="form-row">
           <Field label="品牌" required>
-            <Select value={form.brandId} disabled={!!item} onChange={(e) => set('brandId', Number(e.target.value))}>
+            <Select value={form.brandId} disabled={!!item || !!preset} onChange={(e) => set('brandId', Number(e.target.value))}>
               {activeBrands.map((b) => (
                 <option key={b.id} value={b.id}>
                   {b.name}

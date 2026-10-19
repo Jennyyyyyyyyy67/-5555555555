@@ -21,6 +21,7 @@ import InsightsPage from './pages/analytics/InsightsPage';
 import ReportsPage from './pages/analytics/ReportsPage';
 import AuditPage from './pages/analytics/AuditPage';
 import StylePage from './pages/settings/StylePage';
+import LibraryPage from './pages/library/LibraryPage';
 
 export default function App() {
   return (
@@ -48,6 +49,7 @@ export default function App() {
         <Route path="/reports" element={<RequirePermission perm="viewDashboard"><ReportsPage /></RequirePermission>} />
         <Route path="/audit" element={<RequirePermission perm="viewAuditLogs"><AuditPage /></RequirePermission>} />
         <Route path="/knowledge" element={<KnowledgePage />} />
+        <Route path="/library" element={<LibraryPage />} />
         <Route path="/settings/style" element={<RequirePermission perm="viewAccounts"><StylePage /></RequirePermission>} />
         <Route path="/automation" element={<RequirePermission perm="testAutomation"><AutomationPage /></RequirePermission>} />
         <Route path="/settings/brands" element={<RequirePermission perm="manageBrands"><BrandsPage /></RequirePermission>} />

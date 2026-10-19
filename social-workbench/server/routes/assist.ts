@@ -17,6 +17,7 @@ import { composeReplies } from '../ai/provider';
 import { PRIORITIES, PRIORITY_LABELS, SLA_ACTIVE_STATUSES, type Priority, type RiskFlag, type Sentiment } from '../../shared/constants';
 import type { KnowledgeHit, ReplyCheckResult, SuggestionSet, SuggestionsResponse } from '../../shared/types';
 import { buildDetail } from './inbox';
+import { examplesFor } from './library';
 
 interface Ctx {
   c: CommentRow & { category_id: number | null; risk_flags: string; sentiment: Sentiment | null; rating: number | null; priority: Priority | null; occurred_at: string; sla_due_at: string | null };
@@ -45,13 +46,14 @@ async function buildMeta(db: DB, ctx: Ctx) {
     ? ((await get<{ tone_note: string }>(db, 'SELECT tone_note FROM brand_category_settings WHERE brand_id = ? AND category_id = ?', [ctx.brand.id, ctx.c.category_id]))?.tone_note ?? '')
     : '';
   const style = await loadFullStyle(db, ctx.brand.id);
+  const examples = await examplesFor(db, ctx.brand.id, ctx.c.category_id);
   const knowledgeGap = kn.needsKnowledge && kn.hits.length === 0;
   const notes: string[] = [];
   if (knowledgeGap) notes.push('知識不足：知識庫找不到可引用的資料，建議的回覆不包含價格、規格等事實。請確認後再回覆，或請對方私訊由專人說明。');
   for (const s of kn.skipped) notes.push(`知識「${s.title}」${s.reason}，沒有使用。`);
   const critical = forceHuman.filter((r) => ['complaint', 'refund', 'sensitive', 'promise', 'risk'].includes(r.code));
   if (critical.length) notes.push(`這則留言需要人工判斷（${critical.map((r) => r.label).join('、')}），建議內容只做致歉與引導私訊，不承諾退款、賠償或處理時間。`);
-  return { analysis, kn, forceHuman, guidance, style, knowledgeGap, notes };
+  return { analysis, kn, forceHuman, guidance, style, examples, knowledgeGap, notes };
 }
 
 async function latestSet(db: DB, ctx: Ctx): Promise<SuggestionSet | null> {
@@ -94,6 +96,7 @@ async function latestSet(db: DB, ctx: Ctx): Promise<SuggestionSet | null> {
     forbiddenPromises: meta.style.forbiddenPromises,
     variants,
     notes: meta.notes,
+    examples: meta.examples,
   };
 }
 
@@ -105,6 +108,7 @@ async function generate(db: DB, ctx: Ctx, user: AuthUser): Promise<void> {
     authorName: ctx.c.author_name,
     postContext: post ? `${post.title}${post.body && post.body !== post.title ? `｜${post.body}` : ''}`.slice(0, 300) : undefined,
     guidance: meta.guidance,
+    examples: meta.examples,
     body: ctx.c.body,
     categoryKey: ctx.categoryKey,
     riskFlags: meta.analysis.riskFlags,

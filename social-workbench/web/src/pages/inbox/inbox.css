@@ -662,3 +662,10 @@
   background: var(--danger-weak);
   color: var(--danger-text);
 }
+
+/* 品牌回覆下方：收錄為範例、存成知識 */
+.reply-tools {
+  gap: 12px;
+  margin-top: 4px;
+  opacity: 0.85;
+}

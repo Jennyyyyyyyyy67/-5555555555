@@ -54,6 +54,8 @@ export interface ComposeInput {
   seed: number;
   /** 品牌對這類留言的處理提示 */
   guidance?: string;
+  /** 品牌的回覆範例（參考語氣與處理方式） */
+  examples?: Array<{ scenario: string; sampleComment: string; goodReply: string; badReply: string }>;
 }
 
 export interface ComposedVariant {

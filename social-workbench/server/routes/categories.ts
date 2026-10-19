@@ -120,10 +120,10 @@ export function brandCategorySettingRoutes(): Router {
   async function load(db: Request['db'], brandId: number): Promise<BrandCategorySetting[]> {
     const rows = await all<{
       category_id: number; key: string; name: string; is_active: number; default_sla_minutes: number | null;
-      sla_minutes: number | null; sla_enabled: number; handling_mode: BrandCategorySetting['handlingMode'];
+      sla_minutes: number | null; sla_enabled: number; handling_mode: BrandCategorySetting['handlingMode']; tone_note: string;
     }>(
       db,
-      `SELECT cc.id AS category_id, cc.key, cc.name, cc.is_active, cc.default_sla_minutes, s.sla_minutes, s.sla_enabled, s.handling_mode
+      `SELECT cc.id AS category_id, cc.key, cc.name, cc.is_active, cc.default_sla_minutes, s.sla_minutes, s.sla_enabled, s.handling_mode, s.tone_note
        FROM comment_categories cc JOIN brand_category_settings s ON s.category_id = cc.id AND s.brand_id = ?
        ORDER BY cc.sort_order, cc.id`,
       [brandId],
@@ -137,6 +137,7 @@ export function brandCategorySettingRoutes(): Router {
       slaMinutes: x.sla_minutes,
       slaEnabled: x.sla_enabled === 1,
       handlingMode: x.handling_mode,
+      toneNote: x.tone_note,
     }));
   }
 
@@ -156,6 +157,7 @@ export function brandCategorySettingRoutes(): Router {
           slaMinutes: slaField,
           slaEnabled: z.boolean(),
           handlingMode: z.enum(HANDLING_MODES).optional(),
+          toneNote: z.string().trim().max(300, '語氣指引最多 300 個字').optional(),
         }),
       )
       .min(1),
@@ -172,6 +174,27 @@ export function brandCategorySettingRoutes(): Router {
       for (const it of items) {
         const before = current.find((c) => c.categoryId === it.categoryId);
         if (!before) throw badRequest('留言類型不存在');
+        const toneChanged = it.toneNote !== undefined && it.toneNote !== before.toneNote;
+        if (toneChanged) {
+          await run(req.db, 'UPDATE brand_category_settings SET tone_note = ?, updated_by_id = ?, updated_at = ? WHERE brand_id = ? AND category_id = ?', [
+            it.toneNote,
+            user.id,
+            nowIso(),
+            brandId,
+            it.categoryId,
+          ]);
+          await audit(req.db, {
+            actorType: 'user',
+            actorUserId: user.id,
+            brandId,
+            action: 'brand.tone_update',
+            targetType: 'comment_category',
+            targetId: it.categoryId,
+            summary: `修改「${brand.name}」的「${before.name}」回覆語氣指引`,
+            before: { toneNote: before.toneNote },
+            after: { toneNote: it.toneNote },
+          });
+        }
         const changed = before.slaMinutes !== it.slaMinutes || before.slaEnabled !== it.slaEnabled || (it.handlingMode && it.handlingMode !== before.handlingMode);
         if (!changed) continue;
         await run(

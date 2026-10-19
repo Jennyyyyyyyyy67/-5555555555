@@ -142,6 +142,13 @@ export const IconBolt = (p: IconProps) => (
   </Svg>
 );
 
+export const IconChat = (p: IconProps) => (
+  <Svg {...p}>
+    <path d="M21 12a8 8 0 01-11.6 7.1L4 20l1-4.6A8 8 0 1121 12z" />
+    <path d="M8.5 10.5h7M8.5 13.5h4.5" />
+  </Svg>
+);
+
 export const IconBook = (p: IconProps) => (
   <Svg {...p}>
     <path d="M4 5.5A2.5 2.5 0 016.5 3H20v15H6.5A2.5 2.5 0 004 20.5z" />

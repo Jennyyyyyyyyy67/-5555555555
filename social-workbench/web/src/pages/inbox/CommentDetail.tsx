@@ -24,6 +24,7 @@ import type { CommentDetail, ReplyInput } from '../../../../shared/types';
 import { SlaChip, syncServerTime, useNow } from './sla';
 import { ReplyComposer } from './ReplyComposer';
 import { useMeta } from '../../lib/meta';
+import { KnowledgeModal, type KnowledgePreset } from '../knowledge/KnowledgePage';
 
 interface Props {
   id: number;
@@ -141,12 +142,15 @@ export default function CommentDetailPane({ id, onClose, onChanged, onFilterPost
       <div className="detail-body">
         <div className="detail-main">
           <PostCard d={d} onFilterPost={onFilterPost} />
-          <Thread d={d} />
+          <Thread d={d} onChanged={() => void load()} />
           {isOpen || c.status === 'waiting' ? (
             caps.reply && c.visibility !== 'deleted' ? (
               <ReplyComposer
                 key={c.id}
                 commentId={c.id}
+                brandId={c.brandId}
+                categoryKey={c.categoryKey}
+                authorName={c.authorName}
                 disabled={!canWrite}
                 lockMine={!!d.lock?.isMine}
                 onFocusStart={() => {
@@ -271,7 +275,11 @@ function PostCard({ d, onFilterPost }: { d: CommentDetail; onFilterPost: (postId
   );
 }
 
-function Thread({ d }: { d: CommentDetail }) {
+function Thread({ d, onChanged }: { d: CommentDetail; onChanged: () => void }) {
+  const { can } = useAuth();
+  const [collecting, setCollecting] = useState<{ id: number; body: string } | null>(null);
+  const [toKnowledge, setToKnowledge] = useState<KnowledgePreset | null>(null);
+  const commentBody = (commentId: number) => d.thread.find((t) => t.kind === 'comment' && t.id === commentId)?.body ?? '';
   return (
     <section className="thread" aria-label="留言串">
       {d.thread.map((t) =>
@@ -299,10 +307,99 @@ function Thread({ d }: { d: CommentDetail }) {
               </span>
             </div>
             <p>{t.body}</p>
+            <div className="row-wrap small reply-tools">
+              {t.exampleStatus === 'active' ? (
+                <Badge tone="purple">已收錄為回覆範例</Badge>
+              ) : t.exampleStatus === 'pending' ? (
+                <Badge tone="orange">回覆範例審核中</Badge>
+              ) : (
+                <button className="link-btn" onClick={() => setCollecting({ id: t.id, body: t.body })} title="把這則寫得好的回覆收進回覆範例，讓 AI 學習">
+                  收錄為範例
+                </button>
+              )}
+              <button
+                className="link-btn"
+                onClick={() => {
+                  const q = commentBody(t.commentId).replace(/\s+/g, ' ').trim();
+                  setToKnowledge({ brandId: d.comment.brandId, title: [...q].length > 40 ? `${[...q].slice(0, 40).join('')}…` : q, content: t.body, sourceCommentId: t.commentId });
+                }}
+                title="把這次人工處理的答案存成知識，之後 AI 可以引用"
+              >
+                存成知識
+              </button>
+            </div>
           </div>
         ),
       )}
+      {collecting && (
+        <CollectExampleModal
+          reply={collecting}
+          approver={can('approveKnowledge')}
+          onClose={() => setCollecting(null)}
+          onDone={() => {
+            setCollecting(null);
+            onChanged();
+          }}
+        />
+      )}
+      {toKnowledge && (
+        <KnowledgeModal item={null} preset={toKnowledge} approver={can('approveKnowledge')} onClose={() => setToKnowledge(null)} onSaved={() => setToKnowledge(null)} />
+      )}
     </section>
+  );
+}
+
+function CollectExampleModal({ reply, approver, onClose, onDone }: { reply: { id: number; body: string }; approver: boolean; onClose: () => void; onDone: () => void }) {
+  const toast = useToast();
+  const [goodReply, setGoodReply] = useState(reply.body);
+  const [scenario, setScenario] = useState('');
+  const [badReply, setBadReply] = useState('');
+  const [notes, setNotes] = useState('');
+  const [saving, setSaving] = useState(false);
+  const submit = async () => {
+    setSaving(true);
+    try {
+      await api.post('/reply-examples/from-reply', { replyId: reply.id, goodReply, scenario, badReply, notes });
+      toast.success(approver ? '已收錄，AI 之後會參考這則回覆' : '已送出，等待主管審核後收錄');
+      onDone();
+    } catch (err) {
+      toast.error(errorMessage(err));
+    } finally {
+      setSaving(false);
+    }
+  };
+  return (
+    <Modal
+      open
+      title="收錄為回覆範例"
+      onClose={onClose}
+      footer={
+        <>
+          <Button onClick={onClose}>取消</Button>
+          <Button variant="primary" loading={saving} onClick={() => void submit()}>
+            {approver ? '收錄' : '送出審核'}
+          </Button>
+        </>
+      }
+    >
+      <div className="stack">
+        <p className="muted small" style={{ margin: 0 }}>
+          只收錄真的值得學習的回覆。AI 會參考它的語氣與處理方式，但價格等事實仍只會引用知識庫。
+        </p>
+        <Field label="適用情境（選填）">
+          <TextInput value={scenario} maxLength={100} onChange={(e) => setScenario(e.target.value)} placeholder="例如：顧客問有沒有空位可以預約" />
+        </Field>
+        <Field label="建議的回覆" required hint="可以順手修飾成更通用的寫法。">
+          <Textarea rows={4} maxLength={2000} value={goodReply} onChange={(e) => setGoodReply(e.target.value)} />
+        </Field>
+        <Field label="不建議如何回覆（選填）">
+          <Textarea rows={2} maxLength={2000} value={badReply} onChange={(e) => setBadReply(e.target.value)} />
+        </Field>
+        <Field label="說明（選填）">
+          <TextInput value={notes} maxLength={300} onChange={(e) => setNotes(e.target.value)} />
+        </Field>
+      </div>
+    </Modal>
   );
 }
 
@@ -555,6 +652,7 @@ function AnalysisCard({ d, busy, act }: { d: CommentDetail; busy: string | null;
       )}
       {c.tags.length > 0 && <p className="small muted" style={{ margin: '8px 0 0' }}>標籤：{c.tags.join('、')}</p>}
       {c.needsHuman && <p className="small warn-text">⚠ 這則留言必須由人工判斷與回覆，AI 不會自動處理。</p>}
+      {ai?.knowledgeGap && d.replies.length > 0 && <p className="small muted" style={{ margin: '8px 0 0' }}>💡 已經人工回覆了：可以在留言串的回覆下方按「存成知識」，下次 AI 就能回答。</p>}
       <Modal
         open={open}
         title="修正 AI 判斷"

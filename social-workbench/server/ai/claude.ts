@@ -191,6 +191,11 @@ export async function claudeComposeVariants(i: ComposeInput & { authorName?: str
     '- 不要加簽名（系統會自動加上）。不要使用 Markdown。',
     `- 每個版本都要寫，版本與風格：\n${keys.map((k) => `  - ${k}：${VARIANT_GUIDE[k] ?? k}`).join('\n')}`,
     i.guidance ? `- 這類留言的處理提示：${i.guidance}` : '',
+    i.examples?.length
+      ? `品牌過去的回覆範例（學習語氣、長度與處理方式；範例裡的價格、日期等事實不可沿用，事實一律以 <knowledge> 為準）：\n${i.examples
+          .map((e) => `<example>${e.scenario ? `\n情境：${e.scenario}` : ''}\n留言：${e.sampleComment}\n建議回覆：${e.goodReply}${e.badReply ? `\n不建議的回覆：${e.badReply}` : ''}\n</example>`)
+          .join('\n')}`
+      : '',
     '可引用的品牌知識：',
     knowledge,
   ]

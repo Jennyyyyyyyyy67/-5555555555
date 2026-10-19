@@ -285,7 +285,7 @@ export default function AccountsPage() {
 
         <Card title="平台串接狀態">
           <p className="muted small" style={{ marginBottom: 12 }}>
-            每個平台各由一個 adapter 負責串接，日後接上真實 API 時只要替換該平台的 adapter，帳號、留言與操作紀錄等其他功能都不受影響。
+            透過上方的連結按鈕登入的帳號使用真實 API；手動新增的示範帳號使用模擬資料。Facebook 社團的 API 已被 Meta 關閉，只能模擬。
           </p>
           {meta ? (
             <ul className="acc-platforms">
@@ -296,9 +296,11 @@ export default function AccountsPage() {
                       <PlatformIcon platform={p.key} />
                       <strong>{p.label}</strong>
                     </span>
-                    {p.isMock ? <Badge tone="orange">模擬 adapter</Badge> : <Badge tone="green">已串接 API</Badge>}
+                    {p.liveAccountTypes.length > 0 ? <Badge tone="green">可連結真實帳號</Badge> : <Badge tone="orange">僅模擬</Badge>}
                   </span>
-                  <span className="muted small">{p.accountTypes.map((t) => t.label).join('、')}</span>
+                  <span className="muted small">
+                    {p.accountTypes.map((t) => (p.liveAccountTypes.includes(t.key) ? t.label : `${t.label}（僅模擬）`)).join('、')}
+                  </span>
                 </li>
               ))}
             </ul>

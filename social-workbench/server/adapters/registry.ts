@@ -96,11 +96,20 @@ export function adapterKeyFor(platform: string): string {
   return `${a.isMock ? 'mock' : 'live'}:${a.platform}`;
 }
 
+/** 已實作真實 API 的帳號類型（Facebook 社團的 API 已被 Meta 關閉，只能模擬） */
+const LIVE_ACCOUNT_TYPES: Record<string, string[]> = {
+  facebook: ['fb_page'],
+  instagram: ['ig_account'],
+  youtube: ['yt_channel'],
+  google: ['google_business'],
+};
+
 export function platformMeta(): PlatformMeta[] {
   return listAdapters().map((a) => ({
     key: a.platform,
     label: a.label,
     isMock: a.isMock,
+    liveAccountTypes: LIVE_ACCOUNT_TYPES[a.platform] ?? [],
     accountTypes: a.accountTypes.map((t) => ({ ...t })),
   }));
 }

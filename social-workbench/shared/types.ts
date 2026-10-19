@@ -75,6 +75,8 @@ export interface PlatformMeta {
   label: string;
   /** true 表示目前使用模擬 adapter（尚未串接真實 API） */
   isMock: boolean;
+  /** 可以透過登入連結真實帳號的帳號類型（其餘為示範／模擬） */
+  liveAccountTypes: string[];
   accountTypes: AccountTypeMeta[];
 }
 

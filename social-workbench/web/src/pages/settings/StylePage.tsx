@@ -1,5 +1,6 @@
 // 品牌 AI 回覆風格：設定語氣、稱呼、常用語、禁用詞、不可承諾事項，並即時預覽各版本回覆。
 import { useEffect, useState } from 'react';
+import { Link } from 'react-router-dom';
 import { useAuth } from '../../auth/AuthContext';
 import { useBrandScope } from '../../brand/BrandScope';
 import { api, errorMessage } from '../../lib/api';
@@ -120,6 +121,11 @@ export default function StylePage() {
         <Alert tone="info">目前使用模擬 AI（關鍵字規則與範本）。在 Vercel 設定 GEMINI_API_KEY（免費）或 ANTHROPIC_API_KEY（付費）後，AI 會依品牌風格寫回覆。</Alert>
       ) : null}
       {!editable && <Alert>你可以檢視與預覽；只有管理員可以修改。</Alert>}
+      {editable && (
+        <p className="small muted" style={{ margin: '0 0 8px' }}>
+          不想一項一項填？到 <Link to="/setup">AI 快速設定</Link> 填店家資料，AI 會一次產生風格、類型語氣、知識庫與常用回覆，確認後再加入。
+        </p>
+      )}
       {error ? (
         <ErrorMessage error={error} onRetry={() => void load(brandId)} />
       ) : !form ? (

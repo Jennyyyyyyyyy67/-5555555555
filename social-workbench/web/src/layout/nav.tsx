@@ -26,6 +26,7 @@ export const NAV_SECTIONS: NavSection[] = [
   {
     title: 'AI 與自動化',
     items: [
+      { to: '/setup', label: 'AI 快速設定', icon: <IconSparkle />, perm: 'manageSettings' },
       { to: '/knowledge', label: '知識庫', icon: <IconBook /> },
       { to: '/library', label: '回覆範本', icon: <IconChat /> },
       { to: '/settings/style', label: 'AI 回覆風格', icon: <IconSparkle />, perm: 'viewAccounts' },

@@ -211,7 +211,7 @@ function LiveConnect({ provider, onChanged }: { provider: ProviderKey; onChanged
         {notice && <Alert tone={notice.tone}>{notice.text}</Alert>}
         {welcome && (
           <Alert tone="success">
-            <strong>歡迎加入！</strong>帳號已建立。第一步：按下方「連結 Instagram 帳號」或「連結 Facebook 粉專」，登入並允許，系統就會開始幫你整理留言。接著到「自動回覆」設定要自動回覆的關鍵字。
+            <strong>歡迎加入！</strong>帳號已建立。第一步：按下方「連結 Instagram 帳號」或「連結 Facebook 粉專」，登入並允許，系統就會開始幫你整理留言。接著到左邊「AI 快速設定」填一份店家資料，AI 會幫你產生回覆風格、知識庫與常用回覆。
           </Alert>
         )}
         {!s ? (

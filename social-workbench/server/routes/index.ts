@@ -18,6 +18,7 @@ import { styleRoutes } from './style';
 import { batchRoutes } from './batch';
 import { analyticsRoutes } from './analytics';
 import { cannedReplyRoutes, replyExampleRoutes } from './library';
+import { setupRoutes } from './setup';
 
 /** 所有 API 路由。除了 /auth 之外都需要登入；更細的角色與品牌權限由各路由自行檢查。 */
 export function apiRouter(): Router {
@@ -29,6 +30,7 @@ export function apiRouter(): Router {
   r.use('/meta', requireAuth(), metaRoutes());
   r.use('/brands/:id/category-settings', requireAuth(), brandCategorySettingRoutes());
   r.use('/brands/:id/style', requireAuth(), styleRoutes());
+  r.use('/brands/:id/setup', requireAuth(), setupRoutes());
   r.use('/knowledge', requireAuth(), knowledgeRoutes());
   r.use('/canned-replies', requireAuth(), cannedReplyRoutes());
   r.use('/reply-examples', requireAuth(), replyExampleRoutes());

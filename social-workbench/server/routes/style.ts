@@ -1,7 +1,7 @@
 // 品牌 AI 回覆風格：查看、修改（管理員），以及用範例留言預覽各版本回覆。
 import { Router, type Request, type Response } from 'express';
 import { z } from 'zod';
-import { get, run, tx } from '../db';
+import { get, run, tx, type DB } from '../db';
 import { authed, requirePermission } from '../auth/middleware';
 import { audit, diffFields } from '../services/audit';
 import { notFound } from '../lib/errors';
@@ -11,6 +11,7 @@ import { searchKnowledge } from '../ai/knowledge';
 import { mockProvider } from '../ai/mockProvider';
 import { composeReplies } from '../ai/provider';
 import type { BrandStyleView, SuggestionVariant } from '../../shared/types';
+import type { AuthUser } from '../auth/session';
 
 const list = (max: number, label: string) => z.array(z.string().trim().min(1).max(60, `${label}每項最多 60 個字`)).max(max, `${label}最多 ${max} 項`);
 
@@ -51,55 +52,7 @@ export function styleRoutes(): Router {
     const input = styleSchema.parse(req.body);
     const current = await loadFullStyle(req.db, brandId);
     const brand = (await get<{ name: string }>(req.db, 'SELECT name FROM brands WHERE id = ?', [brandId]))!;
-    const { brandId: _b, updatedAt: _u, updatedByName: _n, ...curInput } = current;
-    const diff = diffFields(curInput, input);
-    if (diff) {
-      const variants = DEFAULT_VARIANTS.map((d) => ({ ...d, enabled: input.variants.find((v) => v.key === d.key)?.enabled ?? true }));
-      await tx(req.db, async () => {
-        await run(
-          req.db,
-          `INSERT INTO brand_styles (brand_id, updated_at) VALUES (?, ?) ON CONFLICT (brand_id) DO NOTHING`,
-          [brandId, nowIso()],
-        );
-        await run(
-          req.db,
-          `UPDATE brand_styles SET personality = :personality, speaking_style = :speaking_style, tone = :tone, formality = :formality, humor = :humor,
-             reply_length = :reply_length, emoji_usage = :emoji_usage, addressing = :addressing, common_phrases = :common_phrases,
-             banned_words = :banned_words, unsuitable_tones = :unsuitable_tones, forbidden_promises = :forbidden_promises, signature = :signature,
-             variants = :variants, updated_by_id = :updated_by_id, updated_at = :updated_at WHERE brand_id = :brand_id`,
-          {
-            personality: input.personality,
-            speaking_style: input.speakingStyle,
-            tone: input.tone,
-            formality: input.formality,
-            humor: input.humor,
-            reply_length: input.replyLength,
-            emoji_usage: input.emojiUsage,
-            addressing: input.addressing,
-            common_phrases: input.commonPhrases,
-            banned_words: input.bannedWords,
-            unsuitable_tones: input.unsuitableTones,
-            forbidden_promises: input.forbiddenPromises,
-            signature: input.signature,
-            variants,
-            updated_by_id: user.id,
-            updated_at: nowIso(),
-            brand_id: brandId,
-          },
-        );
-        await audit(req.db, {
-          actorType: 'user',
-          actorUserId: user.id,
-          brandId,
-          action: 'brand.style_update',
-          targetType: 'brand',
-          targetId: brandId,
-          summary: `${user.name} 修改「${brand.name}」的 AI 回覆風格`,
-          before: diff.before,
-          after: diff.after,
-        });
-      });
-    }
+    await writeStyle(req.db, brandId, input, user, brand.name, current);
     res.json(await loadFullStyle(req.db, brandId));
   });
 
@@ -121,4 +74,54 @@ export function styleRoutes(): Router {
   });
 
   return r;
+}
+
+/** 儲存品牌回覆風格並記錄操作紀錄（沒有變更就不寫入）。風格頁與 AI 快速設定共用。 */
+export async function writeStyle(db: DB, brandId: number, input: z.infer<typeof styleSchema>, user: AuthUser, brandName: string, current?: BrandStyleView, summary?: string): Promise<boolean> {
+  const cur = current ?? (await loadFullStyle(db, brandId));
+  const { brandId: _b, updatedAt: _u, updatedByName: _n, ...curInput } = cur;
+  const diff = diffFields(curInput, input);
+  if (!diff) return false;
+  const variants = DEFAULT_VARIANTS.map((d) => ({ ...d, enabled: input.variants.find((v) => v.key === d.key)?.enabled ?? true }));
+  await tx(db, async () => {
+    await run(db, `INSERT INTO brand_styles (brand_id, updated_at) VALUES (?, ?) ON CONFLICT (brand_id) DO NOTHING`, [brandId, nowIso()]);
+    await run(
+      db,
+      `UPDATE brand_styles SET personality = :personality, speaking_style = :speaking_style, tone = :tone, formality = :formality, humor = :humor,
+         reply_length = :reply_length, emoji_usage = :emoji_usage, addressing = :addressing, common_phrases = :common_phrases,
+         banned_words = :banned_words, unsuitable_tones = :unsuitable_tones, forbidden_promises = :forbidden_promises, signature = :signature,
+         variants = :variants, updated_by_id = :updated_by_id, updated_at = :updated_at WHERE brand_id = :brand_id`,
+      {
+        personality: input.personality,
+        speaking_style: input.speakingStyle,
+        tone: input.tone,
+        formality: input.formality,
+        humor: input.humor,
+        reply_length: input.replyLength,
+        emoji_usage: input.emojiUsage,
+        addressing: input.addressing,
+        common_phrases: input.commonPhrases,
+        banned_words: input.bannedWords,
+        unsuitable_tones: input.unsuitableTones,
+        forbidden_promises: input.forbiddenPromises,
+        signature: input.signature,
+        variants,
+        updated_by_id: user.id,
+        updated_at: nowIso(),
+        brand_id: brandId,
+      },
+    );
+    await audit(db, {
+      actorType: 'user',
+      actorUserId: user.id,
+      brandId,
+      action: 'brand.style_update',
+      targetType: 'brand',
+      targetId: brandId,
+      summary: summary ?? `${user.name} 修改「${brandName}」的 AI 回覆風格`,
+      before: diff.before,
+      after: diff.after,
+    });
+  });
+  return true;
 }

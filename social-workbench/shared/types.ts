@@ -1256,3 +1256,88 @@ export interface ReplyExampleListResponse {
   items: ReplyExample[];
   counts: Record<ReplyExampleStatus | 'all', number>;
 }
+
+// ---------- AI 快速設定 ----------
+/** 店家填寫的基本資料；事實類欄位（地址、時間、價格…）只會原樣整理成知識，不交給 AI 改寫 */
+export interface SetupProfile {
+  businessName: string;
+  /** 行業，例如：美髮店、咖啡店 */
+  industry: string;
+  /** 店家特色、主要在做什麼 */
+  description: string;
+  /** 服務或商品（一行一項，或用頓號分隔） */
+  services: string;
+  /** 品牌形象與個性 */
+  brandImage: string;
+  /** 主要客群（選填） */
+  audience: string;
+  addressing: string;
+  emojiUsage: 'none' | 'light' | 'frequent';
+  signature: string;
+  address: string;
+  hours: string;
+  booking: string;
+  contact: string;
+  prices: string;
+  /** 其他事實，例如停車、付款方式（一行一項） */
+  otherFacts: string;
+  /** 不可承諾的事（一行一項） */
+  forbiddenPromises: string;
+}
+
+export interface SetupKnowledgeDraft {
+  category: KnowledgeCategory;
+  title: string;
+  content: string;
+  keywords: string[];
+  /** 品牌已有同名知識（加入時會略過） */
+  exists: boolean;
+}
+
+export interface SetupCannedDraft {
+  categoryId: number | null;
+  categoryName: string | null;
+  title: string;
+  body: string;
+  exists: boolean;
+  /** 給店家確認的提醒（例如內容有店家資料裡沒有的數字） */
+  warnings: string[];
+}
+
+export interface SetupExampleDraft {
+  categoryId: number | null;
+  categoryName: string | null;
+  scenario: string;
+  sampleComment: string;
+  goodReply: string;
+  badReply: string;
+  notes: string;
+  warnings: string[];
+}
+
+export interface SetupDraft {
+  provider: 'claude' | 'gemini' | 'mock';
+  style: BrandStyleInput;
+  toneNotes: Array<{ categoryId: number; categoryName: string; note: string }>;
+  knowledge: SetupKnowledgeDraft[];
+  canned: SetupCannedDraft[];
+  examples: SetupExampleDraft[];
+  notes: string[];
+}
+
+export interface SetupApplyInput {
+  style: BrandStyleInput | null;
+  toneNotes: Array<{ categoryId: number; note: string }>;
+  knowledge: Array<{ category: KnowledgeCategory; title: string; content: string; keywords: string[] }>;
+  canned: Array<{ categoryId: number | null; title: string; body: string }>;
+  examples: Array<{ categoryId: number | null; scenario: string; sampleComment: string; goodReply: string; badReply: string; notes: string }>;
+}
+
+export interface SetupApplyResult {
+  style: boolean;
+  toneNotes: number;
+  knowledge: number;
+  canned: number;
+  examples: number;
+  skipped: string[];
+}

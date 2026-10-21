@@ -11,7 +11,7 @@ import { audit } from '../services/audit';
 import { HttpError } from '../lib/errors';
 import { nowIso } from '../lib/clock';
 import { DEMO_PASSWORD, DEMO_USERS } from '../seed/demo';
-import type { BrandSummary, DemoAccountsResponse, MeResponse } from '../../shared/types';
+import type { BrandSummary, DemoAccountsResponse, MeResponse, SecurityCheckResponse } from '../../shared/types';
 
 export async function buildMe(db: DB, user: AuthUser, scope: BrandScope): Promise<MeResponse> {
   const rows = await all<{ id: number; name: string; code: string; color: string; is_active: number }>(
@@ -49,7 +49,7 @@ export function authRoutes(): Router {
   r.post('/login', async (req: Request, res: Response) => {
     const { email, password } = loginSchema.parse(req.body);
     const db = req.db;
-    if (isLoginLocked(email)) {
+    if (await isLoginLocked(db, email)) {
       throw new HttpError(429, 'too_many_attempts', '登入失敗次數過多，請 10 分鐘後再試');
     }
     const row = await get<{ id: number; name: string; email: string; role: AuthUser['role']; is_active: number; password_hash: string }>(
@@ -57,8 +57,9 @@ export function authRoutes(): Router {
       'SELECT id, name, email, role, is_active, password_hash FROM users WHERE lower(email) = lower(?)',
       [email],
     );
-    if (!row || row.is_active !== 1 || !verifyPassword(password, row.password_hash)) {
-      recordLoginFailure(email);
+    const passwordOk = !!row && verifyPassword(password, row.password_hash);
+    if (!row || !passwordOk || row.is_active !== 1) {
+      await recordLoginFailure(db, email);
       await audit(db, {
         actorType: 'system',
         action: 'auth.login_failed',
@@ -67,9 +68,10 @@ export function authRoutes(): Router {
         summary: row && row.is_active !== 1 ? `已停用帳號嘗試登入：${email}` : `登入失敗：${email}`,
         detail: { email },
       });
-      throw new HttpError(401, 'invalid_credentials', row && row.is_active !== 1 ? '此帳號已停用，請聯絡管理員' : 'Email 或密碼錯誤');
+      // 密碼正確才告知帳號已停用，避免從錯誤訊息猜出哪些帳號存在
+      throw new HttpError(401, 'invalid_credentials', passwordOk && row.is_active !== 1 ? '此帳號已停用，請聯絡管理員' : 'Email 或密碼錯誤');
     }
-    clearLoginFailures(email);
+    await clearLoginFailures(db, email);
     const user: AuthUser = { id: row.id, name: row.name, email: row.email, role: row.role, isActive: true };
     const session = await createSession(db, user.id);
     await run(db, 'UPDATE users SET last_login_at = ? WHERE id = ?', [nowIso(), user.id]);
@@ -119,7 +121,7 @@ export function authRoutes(): Router {
         'SELECT id, name, role, is_active FROM users WHERE lower(email) = lower(?)',
         [d.email],
       );
-      if (!u || u.is_active !== 1) continue;
+      if (!u || u.is_active !== 1 || !(await usesDemoPassword(req.db, u.id))) continue;
       const brandNames =
         u.role === 'admin'
           ? ['全部品牌']
@@ -133,5 +135,29 @@ export function authRoutes(): Router {
     res.json({ enabled: true, accounts } satisfies DemoAccountsResponse);
   });
 
+  // 管理員安全檢查：列出仍在使用公開示範密碼的啟用帳號（任何人都能從說明文件得知這組密碼）
+  r.get('/security-check', requireAuth(), async (req: Request, res: Response) => {
+    const { user } = authed(req);
+    const publicPasswordAccounts: string[] = [];
+    if (user.role === 'admin') {
+      const rows = await all<{ id: number; email: string }>(req.db, 'SELECT id, email FROM users WHERE is_active = 1 ORDER BY id');
+      for (const u of rows) if (await usesDemoPassword(req.db, u.id)) publicPasswordAccounts.push(u.email);
+    }
+    res.json({ publicPasswordAccounts } satisfies SecurityCheckResponse);
+  });
+
   return r;
+}
+
+/** 這個帳號的密碼是否仍是公開的示範密碼（結果依密碼雜湊快取，scrypt 計算較慢） */
+const demoPasswordCache = new Map<string, boolean>();
+async function usesDemoPassword(db: DB, userId: number): Promise<boolean> {
+  const row = await get<{ password_hash: string }>(db, 'SELECT password_hash FROM users WHERE id = ?', [userId]);
+  if (!row) return false;
+  let hit = demoPasswordCache.get(row.password_hash);
+  if (hit === undefined) {
+    hit = verifyPassword(DEMO_PASSWORD, row.password_hash);
+    demoPasswordCache.set(row.password_hash, hit);
+  }
+  return hit;
 }

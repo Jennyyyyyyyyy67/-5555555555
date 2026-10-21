@@ -53,8 +53,8 @@ npm run dev
 
 注意事項：
 
-- 示範模式（預設開啟）下，打開網址會直接以示範管理員進入。**網址公開時任何人都能進入**；請開啟 Vercel 的 Deployment Protection，或在正式使用前設定 `DEMO_MODE=false`。
-- 設定 `DEMO_MODE=false` 前，請先用管理員建立好自己的帳號（否則會沒有帳號可以登入）。
+- 示範模式在本機預設開啟；**部署到 Vercel 時預設關閉**（登入頁不顯示示範帳號、不能「重設示範資料」），避免任何人用公開的示範密碼登入。要公開展示時才設定 `DEMO_MODE=true`。
+- 如果正式網站上還有帳號使用示範密碼，管理員登入後畫面上方會出現紅色提醒，請到「人員管理」重設密碼或停用。
 - 部署時的建置指令是 `npm run build:vercel`：會把前端與後端（打包成單一函式）輸出到 `.vercel/output`。
 
 ## 其他指令
@@ -67,7 +67,7 @@ npm run build:vercel  # 產生 Vercel 部署用輸出（.vercel/output）
 npm start           # 建置後以單一連接埠（http://localhost:3001）執行
 ```
 
-環境變數（本機皆為選填）：`PORT`（API 連接埠，預設 3001）、`DATABASE_URL`（Postgres 連線字串；未設定時用本機 PGlite）、`DEMO_MODE=false`（關閉示範模式：不自動建立示範資料、登入頁不顯示示範帳號）、`COOKIE_SECURE=true`（以 HTTPS 部署時開啟）。
+環境變數（本機皆為選填）：`PORT`（API 連接埠，預設 3001）、`DATABASE_URL`（Postgres 連線字串；未設定時用本機 PGlite）、`DEMO_MODE`（`true`／`false`；本機預設開啟、Vercel 預設關閉。開啟時資料庫為空會自動建立示範資料、登入頁顯示示範帳號）、`TOKEN_SECRET`（加密平台權杖的金鑰，正式網站必填）、`COOKIE_SECURE=true`（以 HTTPS 部署時開啟）。
 
 ## 架構重點
 

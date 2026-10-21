@@ -3,7 +3,6 @@ import request from 'supertest';
 import type { Express } from 'express';
 import { openDb, resetDatabase, type DB } from '../db';
 import { createApp } from '../app';
-import { resetAllLoginFailures } from '../auth/rateLimit';
 import { FIXTURE_EMAILS, FIXTURE_PASSWORD, seedFixture, type Fixture } from './fixture';
 
 export interface TestContext {
@@ -24,7 +23,6 @@ export function testDb(): Promise<DB> {
 }
 
 export async function createTestContext(): Promise<TestContext> {
-  resetAllLoginFailures();
   const db = await testDb();
   await resetDatabase(db);
   const fx = await seedFixture(db);

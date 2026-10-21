@@ -4,7 +4,6 @@ import { resetAndSeed, type SeedSummary } from './index';
 import { DEMO_BRANDS, DEMO_PASSWORD, DEMO_USERS } from './demo';
 import { verifyPassword } from '../auth/password';
 import { createApp } from '../app';
-import { resetAllLoginFailures } from '../auth/rateLimit';
 import {
   CONTENT_TYPES,
   DEFAULT_CATEGORIES,
@@ -789,7 +788,6 @@ describe('示範資料：品牌設定、人員與登入', () => {
     expect(DEMO_BRANDS.every((b) => brandIdByCode.has(b.code))).toBe(true);
 
     // 透過實際的登入 API（另開一個資料庫，避免登入紀錄影響其他測試）
-    resetAllLoginFailures();
     const loginDb = await openDb('memory:');
     await resetAndSeed(loginDb, { now: NOW });
     const app = createApp(loginDb, { serveStatic: false });

@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { get, openDb, run, tx, type DB } from './db';
 import { config } from './config';
 import { resetAndSeed } from './seed';
@@ -18,12 +19,17 @@ export async function applyAdminPasswordReset(db: DB, env: NodeJS.ProcessEnv = p
     return false;
   }
   const email = (env.ADMIN_RESET_EMAIL?.trim() || 'admin@demo.tw').toLowerCase();
+  // 同一組救援密碼只套用一次：之後改過的密碼或停用狀態，不會在每次冷啟動時被蓋回去
+  const marker = createHash('sha256').update(`${email}\n${password}`).digest('hex');
+  const applied = await get<{ value: string }>(db, "SELECT value FROM schema_meta WHERE key = 'admin_reset_applied'");
+  if (applied?.value === marker) return false;
   const user = await get<{ id: number; name: string }>(db, "SELECT id, name FROM users WHERE lower(email) = ? AND role = 'admin'", [email]);
   if (!user) {
     console.warn(`⚠️  找不到管理員帳號 ${email}，沒有重設密碼`);
     return false;
   }
   await run(db, 'UPDATE users SET password_hash = ?, is_active = 1, updated_at = ? WHERE id = ?', [hashPassword(password), nowIso(), user.id]);
+  await run(db, "INSERT INTO schema_meta (key, value) VALUES ('admin_reset_applied', ?) ON CONFLICT (key) DO UPDATE SET value = excluded.value", [marker]);
   await audit(db, {
     actorType: 'system',
     action: 'user.reset_password',

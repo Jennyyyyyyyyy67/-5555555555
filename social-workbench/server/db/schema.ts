@@ -56,6 +56,12 @@ CREATE TABLE IF NOT EXISTS user_brands (
 );
 
 -- 登入狀態（只存 token 的雜湊值）
+CREATE TABLE IF NOT EXISTS auth_attempts (
+  key TEXT NOT NULL,
+  at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_auth_attempts_key ON auth_attempts(key, at);
+
 CREATE TABLE IF NOT EXISTS sessions (
   token_hash TEXT PRIMARY KEY,
   user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -575,6 +581,7 @@ export const TABLES_IN_ORDER = [
   'users',
   'brands',
   'user_brands',
+  'auth_attempts',
   'sessions',
   'social_accounts',
   'account_credentials',

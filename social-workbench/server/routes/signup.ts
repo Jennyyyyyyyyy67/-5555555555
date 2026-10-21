@@ -4,6 +4,7 @@ import { z } from 'zod';
 import { get, insert, run, tx } from '../db';
 import { config } from '../config';
 import { hashPassword } from '../auth/password';
+import { signupRateLimited } from '../auth/rateLimit';
 import { createSession, type AuthUser } from '../auth/session';
 import { computeScope } from '../auth/scope';
 import { ensureBrandDefaults } from '../db/bootstrap';
@@ -23,19 +24,6 @@ const signupSchema = z.object({
   password: z.string().min(PASSWORD_MIN_LENGTH, `密碼至少 ${PASSWORD_MIN_LENGTH} 個字`).max(200),
 });
 
-// 同一個 IP 一小時最多註冊 5 次，避免被大量灌帳號
-const attempts = new Map<string, number[]>();
-function rateLimited(ip: string): boolean {
-  const now = Date.now();
-  const list = (attempts.get(ip) ?? []).filter((t) => now - t < 3600_000);
-  if (list.length >= 5) return true;
-  list.push(now);
-  attempts.set(ip, list);
-  return false;
-}
-export function resetSignupLimits(): void {
-  attempts.clear();
-}
 
 async function uniqueCode(db: Parameters<typeof get>[0]): Promise<string> {
   for (let i = 0; i < 10; i++) {
@@ -54,7 +42,7 @@ export function signupRoutes(): Router {
 
   r.post('/signup', async (req: Request, res: Response) => {
     if (!config.allowSignup) throw new HttpError(403, 'signup_disabled', '目前未開放註冊，請聯絡系統管理員');
-    if (rateLimited(req.ip ?? 'unknown')) throw new HttpError(429, 'too_many_signups', '註冊次數過多，請稍後再試');
+    if (await signupRateLimited(req.db, req.ip ?? 'unknown')) throw new HttpError(429, 'too_many_signups', '註冊次數過多，請稍後再試');
     const input: SignupInput = signupSchema.parse(req.body);
     const db = req.db;
     if (await get(db, 'SELECT id FROM users WHERE lower(email) = lower(?)', [input.email])) {

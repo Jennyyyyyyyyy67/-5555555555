@@ -1,13 +1,12 @@
 import { Router, type Request, type Response } from 'express';
 import { z } from 'zod';
 import { all, get, insert, run, sqlIn, tx, type DB } from '../db';
-import { SESSION_COOKIE } from '../config';
+import { config, SESSION_COOKIE } from '../config';
 import { authed, requirePermission } from '../auth/middleware';
 import { computeScope } from '../auth/scope';
 import { createSession, type AuthUser } from '../auth/session';
-import { resetAllLoginFailures } from '../auth/rateLimit';
 import { audit } from '../services/audit';
-import { badRequest } from '../lib/errors';
+import { badRequest, forbidden } from '../lib/errors';
 import { resetAndSeed } from '../seed';
 import { buildMe, setSessionCookie } from './auth';
 import type { CommentStatus } from '../../shared/constants';
@@ -85,6 +84,7 @@ export function mockRoutes(): Router {
   // 清空所有資料並重新建立示範資料
   r.post('/reset', requirePermission('manageMockData'), async (req: Request, res: Response) => {
     const { user } = authed(req);
+    if (!config.demoMode) throw forbidden('正式網站已關閉「重設示範資料」，避免清空真實的品牌、人員與留言資料');
     if (!resetSchema.safeParse(req.body ?? {}).success) {
       throw badRequest('請確認要重設示範資料：重設會清空所有資料，確認後請再送出一次');
     }
@@ -105,14 +105,12 @@ export function mockRoutes(): Router {
     ).catch(() => []);
 
     const summary = await resetAndSeed(db);
-    resetAllLoginFailures();
     if (live.length) {
       const now = new Date().toISOString();
       await tx(db, async () => {
         for (const l of live) {
-          const brand =
-            (await get<{ id: number }>(db, 'SELECT id FROM brands WHERE code = ?', [l.brand_code])) ??
-            (await get<{ id: number }>(db, 'SELECT id FROM brands WHERE is_active = 1 ORDER BY id LIMIT 1'));
+          // 只放回原本的品牌；品牌不存在就不保留，避免別家店的真實帳號跑到其他品牌
+          const brand = await get<{ id: number }>(db, 'SELECT id FROM brands WHERE code = ?', [l.brand_code]);
           if (!brand) continue;
           const accountId = await insert(db, 'social_accounts', {
             brand_id: brand.id,

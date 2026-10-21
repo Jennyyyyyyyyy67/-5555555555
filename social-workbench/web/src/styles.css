@@ -233,6 +233,14 @@ textarea {
 .topbar .menu-toggle {
   display: none;
 }
+.security-banner {
+  padding: 10px 16px;
+  font-size: 13px;
+  background: var(--danger-weak);
+  color: var(--danger-text);
+  border-bottom: 1px solid var(--border);
+}
+
 .content {
   padding: 20px 24px 40px;
   min-width: 0;

@@ -1,6 +1,9 @@
 import request from 'supertest';
 import { createTestContext } from '../test/helpers';
 import { all, run } from '../db';
+import { hashPassword } from '../auth/password';
+import { DEMO_PASSWORD } from '../seed/demo';
+import { decryptSecret, encryptSecret } from '../integrations/secret';
 
 describe('登入與身分', () => {
   it('正確帳密可登入並取得可存取品牌', async () => {
@@ -46,6 +49,51 @@ describe('登入與身分', () => {
     const agent = await ctx.loginAs('sup');
     expect((await agent.post('/api/auth/logout')).status).toBe(204);
     expect((await agent.get('/api/auth/me')).status).toBe(401);
+  });
+
+  it('停用帳號：密碼錯誤時不透露帳號已停用', async () => {
+    const ctx = await createTestContext();
+    await run(ctx.db, 'UPDATE users SET is_active = 0 WHERE id = ?', [ctx.fx.opB]);
+    const wrong = await request(ctx.app).post('/api/auth/login').send({ email: 'opb@test.tw', password: 'nope-nope' });
+    expect(wrong.body.error.message).toBe('Email 或密碼錯誤');
+    const right = await request(ctx.app).post('/api/auth/login').send({ email: 'opb@test.tw', password: 'password123' });
+    expect(right.body.error.message).toContain('已停用');
+  });
+
+  it('管理員會看到仍使用公開示範密碼的帳號；其他角色看不到', async () => {
+    const ctx = await createTestContext();
+    await run(ctx.db, 'UPDATE users SET password_hash = ? WHERE id = ?', [hashPassword(DEMO_PASSWORD), ctx.fx.opA]);
+    const admin = await ctx.loginAs('admin');
+    expect((await admin.get('/api/auth/security-check')).body.publicPasswordAccounts).toEqual(['opa@test.tw']);
+    const op = await ctx.loginAs('opB');
+    expect((await op.get('/api/auth/security-check')).body.publicPasswordAccounts).toEqual([]);
+    await run(ctx.db, 'UPDATE users SET password_hash = ? WHERE id = ?', [hashPassword('a-new-strong-pass'), ctx.fx.opA]);
+    expect((await admin.get('/api/auth/security-check')).body.publicPasswordAccounts).toEqual([]);
+  });
+
+  it('登入失敗次數存在資料庫（多個執行個體共用）', async () => {
+    const ctx = await createTestContext();
+    for (let i = 0; i < 5; i++) await request(ctx.app).post('/api/auth/login').send({ email: 'opa@test.tw', password: 'wrong-pass' });
+    const rows = await all(ctx.db, "SELECT key FROM auth_attempts WHERE key = 'login:opa@test.tw'");
+    expect(rows).toHaveLength(5);
+  });
+
+  it('權杖加密：新增 TOKEN_SECRET 後舊資料仍可解密，新資料改用新金鑰', () => {
+    const before = { t: process.env.TOKEN_SECRET, i: process.env.INSTAGRAM_APP_SECRET };
+    try {
+      delete process.env.TOKEN_SECRET;
+      process.env.INSTAGRAM_APP_SECRET = 'old-app-secret';
+      const old = encryptSecret('page-token');
+      process.env.TOKEN_SECRET = 'brand-new-token-secret';
+      expect(decryptSecret(old)).toBe('page-token');
+      const fresh = encryptSecret('page-token-2');
+      delete process.env.TOKEN_SECRET;
+      process.env.INSTAGRAM_APP_SECRET = 'other';
+      expect(() => decryptSecret(fresh)).toThrow();
+    } finally {
+      if (before.t === undefined) delete process.env.TOKEN_SECRET; else process.env.TOKEN_SECRET = before.t;
+      if (before.i === undefined) delete process.env.INSTAGRAM_APP_SECRET; else process.env.INSTAGRAM_APP_SECRET = before.i;
+    }
   });
 
   it('停用帳號的既有 session 立即失效', async () => {

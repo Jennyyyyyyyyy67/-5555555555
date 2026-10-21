@@ -32,8 +32,11 @@ export const config = {
   /** 連線字串來自哪個環境變數（null 表示沒有設定，使用本機 PGlite） */
   databaseUrlSource: found?.source ?? null,
   distDir: `${root}dist`,
-  /** 示範模式：資料庫為空時自動建立示範資料，並在登入頁顯示示範帳號 */
-  demoMode: (process.env.DEMO_MODE ?? 'true') !== 'false',
+  /**
+   * 示範模式：資料庫為空時自動建立示範資料，並在登入頁顯示示範帳號與密碼。
+   * 正式網站（Vercel）預設關閉，避免任何人用公開的示範密碼登入；要展示時再設 DEMO_MODE=true。
+   */
+  demoMode: process.env.DEMO_MODE ? process.env.DEMO_MODE !== 'false' : !onVercel,
   /** 開放企業自助註冊（ALLOW_SIGNUP=false 可關閉） */
   allowSignup: (process.env.ALLOW_SIGNUP ?? 'true') !== 'false',
   sessionTtlHours: Number(process.env.SESSION_TTL_HOURS ?? 12),

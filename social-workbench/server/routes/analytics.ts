@@ -93,10 +93,10 @@ export function analyticsRoutes(): Router {
     const { user, scope } = authed(req);
     const input = ackSchema.parse(req.body);
     assertBrandAccess(scope, input.brandId);
-    if (!input.key.includes(`:${input.brandId}:`)) throw badRequest('事件與品牌不符');
+    if (input.key.split(':')[1] !== String(input.brandId)) throw badRequest('事件與品牌不符');
     const now = nowIso();
     await tx(req.db, async () => {
-      const existing = await get<{ id: number }>(req.db, 'SELECT id FROM anomaly_events WHERE dedupe_key = ?', [input.key]);
+      const existing = await get<{ id: number }>(req.db, 'SELECT id FROM anomaly_events WHERE dedupe_key = ? AND brand_id = ?', [input.key, input.brandId]);
       const data = {
         status: 'resolved',
         metrics: { note: input.note ?? '' },

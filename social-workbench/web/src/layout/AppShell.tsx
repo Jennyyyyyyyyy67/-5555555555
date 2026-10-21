@@ -5,7 +5,7 @@ import { useBrandScope } from '../brand/BrandScope';
 import { Avatar, Button, Dropdown, Select } from '../components/ui';
 import { api } from '../lib/api';
 import { useQuery } from '../lib/useQuery';
-import type { DemoAccountsResponse } from '../../../shared/types';
+import type { DemoAccountsResponse, SecurityCheckResponse } from '../../../shared/types';
 import { IconChevronDown, IconLogout, IconMenu } from '../components/icons';
 import { NAV_SECTIONS } from './nav';
 import { NotificationBell } from './NotificationBell';
@@ -15,6 +15,8 @@ export function AppShell() {
   const { user, logout, login, can } = useAuth();
   const demo = useQuery(() => api.get<DemoAccountsResponse>('/auth/demo-accounts'), []);
   const demoAccounts = demo.data?.enabled ? demo.data.accounts : [];
+  const security = useQuery(() => api.get<SecurityCheckResponse>('/auth/security-check'), [user?.id]);
+  const weakAccounts = security.data?.publicPasswordAccounts ?? [];
   const { selected, setSelected, activeBrands } = useBrandScope();
   const [navOpen, setNavOpen] = useState(false);
   const location = useLocation();
@@ -134,6 +136,11 @@ export function AppShell() {
             )}
           </Dropdown>
         </header>
+        {weakAccounts.length > 0 && (
+          <div className="security-banner" role="alert">
+            ⚠️ 有 {weakAccounts.length} 個帳號仍使用公開的示範密碼，任何人都可能登入：{weakAccounts.join('、')}。請到「人員管理」重設密碼，用不到的帳號請停用。
+          </div>
+        )}
         <main className={`content ${location.pathname.startsWith('/inbox') ? 'full-bleed' : ''}`}>
           <Outlet />
         </main>

@@ -1,12 +1,10 @@
 import request from 'supertest';
 import { createTestContext } from '../test/helpers';
 import { get } from '../db';
-import { resetSignupLimits } from './signup';
 
 const input = { companyName: '舞蹈教室', name: '小甄', email: 'owner@dance.tw', password: 'password123' };
 
 describe('企業自助註冊', () => {
-  beforeEach(() => resetSignupLimits());
 
   it('建立企業負責人與專屬品牌，註冊後直接登入', async () => {
     const ctx = await createTestContext();

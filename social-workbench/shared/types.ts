@@ -55,6 +55,11 @@ export interface DemoAccount {
   brandNames: string[];
 }
 
+export interface SecurityCheckResponse {
+  /** 仍使用公開示範密碼的啟用帳號 email（只有管理員會收到） */
+  publicPasswordAccounts: string[];
+}
+
 export interface DemoAccountsResponse {
   enabled: boolean;
   accounts: DemoAccount[];

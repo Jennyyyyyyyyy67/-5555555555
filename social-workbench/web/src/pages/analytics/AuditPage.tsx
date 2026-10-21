@@ -26,7 +26,7 @@ const ACTORS: Array<[string, string]> = [
   ['rule', '自動化規則'],
   ['system', '系統'],
 ];
-const SOURCE_LABELS: Record<string, string> = { manual: '人工撰寫', ai_adopted: '直接採用 AI 建議', ai_edited: '修改 AI 建議後送出', auto_rule: '自動化規則' };
+const SOURCE_LABELS: Record<string, string> = { manual: '人工撰寫', ai_adopted: '直接採用 AI 建議', ai_edited: '修改 AI 建議後送出', canned: '使用標準回覆', batch: '批次回覆', auto_rule: '自動回覆規則' };
 
 type Item = AuditQueryResponse['items'][number];
 

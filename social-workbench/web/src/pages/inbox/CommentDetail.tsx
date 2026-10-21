@@ -13,6 +13,7 @@ import {
   OPEN_STATUSES,
   PRIORITY_LABELS,
   PRIORITIES,
+  REPLY_SOURCE_LABELS,
   RISK_FLAG_LABELS,
   RISK_LEVEL_LABELS,
   ROLE_LABELS,
@@ -301,7 +302,10 @@ function Thread({ d, onChanged }: { d: CommentDetail; onChanged: () => void }) {
           <div key={`r${t.id}`} className="bubble reply">
             <div className="row-wrap small">
               <span className="brand-reply-tag">品牌回覆</span>
-              <span className="muted">{t.source === 'auto_rule' ? 'AI 自動回覆' : (t.senderName ?? '')}</span>
+              <span className="muted">{t.source === 'auto_rule' ? '系統' : (t.senderName ?? '')}</span>
+              <Badge tone={t.source === 'auto_rule' ? 'purple' : t.source === 'canned' ? 'blue' : t.source === 'manual' ? 'gray' : 'teal'}>
+                {t.source === 'auto_rule' ? '🤖 自動回覆規則' : t.source === 'canned' ? '📋 標準回覆' : (REPLY_SOURCE_LABELS[t.source as keyof typeof REPLY_SOURCE_LABELS] ?? t.source)}
+              </Badge>
               <span className="muted" title={formatDateTime(t.sentAt)}>
                 {formatShortDateTime(t.sentAt)}
               </span>

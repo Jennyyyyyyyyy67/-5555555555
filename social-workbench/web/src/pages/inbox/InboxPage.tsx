@@ -6,7 +6,7 @@ import { api } from '../../lib/api';
 import { formatShortDateTime, formatDateTime } from '../../lib/format';
 import { Avatar, Badge, Button, EmptyState, ErrorMessage, Loading, PRIORITY_TONE, STATUS_TONE, Select, TextInput } from '../../components/ui';
 import { IconRefresh, IconSearch, IconShield, PlatformIcon } from '../../components/icons';
-import { CONTENT_TYPE_LABELS, PRIORITY_LABELS, STATUS_LABELS, COMMENT_STATUSES, PRIORITIES } from '../../../../shared/constants';
+import { CONTENT_TYPE_LABELS, DM_TODO_LABELS, PRIORITY_LABELS, STATUS_LABELS, COMMENT_STATUSES, PRIORITIES } from '../../../../shared/constants';
 import { INBOX_TABS, INBOX_TAB_LABELS, type InboxItem, type InboxResponse, type InboxTab } from '../../../../shared/types';
 import { SlaChip, slaInfo, syncServerTime, useNow } from './sla';
 import CommentDetailPane from './CommentDetail';
@@ -332,6 +332,11 @@ function InboxRow({ c, now, selected, onOpen }: { c: InboxItem; now: number; sel
           )}
           {c.isAd && <Badge tone="orange">廣告</Badge>}
           {c.isAutoHandled && <Badge tone="purple">AI 自動處理</Badge>}
+          {c.dmTodo && !c.dmDoneAt && (
+            <Badge tone={c.dmTodo === 'send' ? 'red' : 'orange'} title="回覆裡提到私訊，記得到平台私訊匣跟進">
+              ✉ {DM_TODO_LABELS[c.dmTodo]}
+            </Badge>
+          )}
           <Badge tone={STATUS_TONE[c.status]}>{STATUS_LABELS[c.status]}</Badge>
           {c.visibility === 'hidden' && <Badge>已隱藏</Badge>}
           <span className="spacer" />

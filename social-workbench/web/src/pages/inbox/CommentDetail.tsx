@@ -8,6 +8,7 @@ import { Avatar, Badge, Button, ConfirmDialog, Dropdown, ErrorMessage, Field, Lo
 import { BrandTag, IconChevronDown, IconShield, IconX, PlatformIcon } from '../../components/icons';
 import {
   CONTENT_TYPE_LABELS,
+  DM_TODO_LABELS,
   HIGH_RISK_ACTIONS,
   INTERACTION_ACTION_LABELS,
   OPEN_STATUSES,
@@ -142,6 +143,7 @@ export default function CommentDetailPane({ id, onClose, onChanged, onFilterPost
 
       <div className="detail-body">
         <div className="detail-main">
+          <DmBanner d={d} busy={busy} act={act} />
           <PostCard d={d} onFilterPost={onFilterPost} />
           <Thread d={d} onChanged={() => void load()} />
           {isOpen || c.status === 'waiting' ? (
@@ -187,6 +189,51 @@ export default function CommentDetailPane({ id, onClose, onChanged, onFilterPost
 }
 
 type Act = (key: string, fn: () => Promise<CommentDetail>, okMsg?: string) => Promise<boolean>;
+
+// ---------- 私訊待辦 ----------
+const DM_INBOX: Record<string, { label: string; url: string }> = {
+  facebook: { label: '開啟 Facebook 私訊匣', url: 'https://business.facebook.com/latest/inbox/all' },
+  instagram: { label: '開啟 Instagram 私訊匣', url: 'https://business.facebook.com/latest/inbox/all' },
+};
+
+function DmBanner({ d, busy, act }: { d: CommentDetail; busy: string | null; act: Act }) {
+  const c = d.comment;
+  if (!c.dmTodo) return null;
+  const set = (done: boolean) => act('dm', () => api.post<CommentDetail>(`/comments/${c.id}/dm`, { done }), done ? '已標示私訊完成' : '已改回未完成');
+  if (c.dmDoneAt) {
+    return (
+      <div className="dm-banner done" role="status">
+        <span>✓ 私訊已完成（{formatShortDateTime(c.dmDoneAt)}）</span>
+        <Button size="sm" variant="ghost" loading={busy === 'dm'} onClick={() => void set(false)}>
+          改回未完成
+        </Button>
+      </div>
+    );
+  }
+  const inbox = DM_INBOX[c.platform];
+  return (
+    <div className={`dm-banner ${c.dmTodo}`} role="alert">
+      <span>
+        <strong>✉ 私訊待辦：{DM_TODO_LABELS[c.dmTodo]}</strong>
+        <br />
+        {c.dmTodo === 'send'
+          ? `回覆裡告訴「${c.authorName}」已經或將會私訊對方，請記得真的去私訊，完成後按「私訊完成」。`
+          : `回覆裡請「${c.authorName}」私訊我們，請留意私訊匣，回覆完對方的私訊後按「私訊完成」。`}
+        {!inbox && ' 這個平台沒有私訊功能，請改用電話或其他方式聯絡。'}
+      </span>
+      <span className="row-wrap" style={{ gap: 6, flex: '0 0 auto' }}>
+        {inbox && (
+          <a className="btn btn-sm btn-ghost" href={inbox.url} target="_blank" rel="noreferrer">
+            {inbox.label} ↗
+          </a>
+        )}
+        <Button size="sm" loading={busy === 'dm'} onClick={() => void set(true)}>
+          私訊完成
+        </Button>
+      </span>
+    </div>
+  );
+}
 
 // ---------- 處理中鎖定 ----------
 function LockBanner({ d, busy, isOpen, onStart, onRelease }: { d: CommentDetail; busy: string | null; isOpen: boolean; onStart: (force?: boolean) => void; onRelease: () => void }) {

@@ -4,6 +4,7 @@ import type {
   Capability,
   CommentStatus,
   ContentType,
+  DmTodo,
   HandlingMode,
   KnowledgeCategory,
   Priority,
@@ -316,7 +317,7 @@ export interface AuditLogEntry {
 // ======================================================================
 
 /** 收件匣分頁 */
-export const INBOX_TABS = ['todo', 'mine', 'unassigned', 'waiting', 'follow_up', 'closed', 'all'] as const;
+export const INBOX_TABS = ['todo', 'mine', 'unassigned', 'waiting', 'follow_up', 'dm', 'closed', 'all'] as const;
 export type InboxTab = (typeof INBOX_TABS)[number];
 export const INBOX_TAB_LABELS: Record<InboxTab, string> = {
   todo: '待處理',
@@ -324,6 +325,7 @@ export const INBOX_TAB_LABELS: Record<InboxTab, string> = {
   unassigned: '未指派',
   waiting: '等待對方',
   follow_up: '稍後追蹤',
+  dm: '私訊待辦',
   closed: '已結束',
   all: '全部',
 };
@@ -344,6 +346,10 @@ export interface InboxItem extends CommentPreview {
   lockExpiresAt: string | null;
   followUpAt: string | null;
   followUpNote: string;
+  /** 私訊待辦：回覆裡提到私訊時自動加入；dmDoneAt 有值代表已完成 */
+  dmTodo: DmTodo | null;
+  dmTodoAt: string | null;
+  dmDoneAt: string | null;
   replyCount: number;
   /** 同一串中的其他留言數（不含品牌回覆） */
   threadCount: number;

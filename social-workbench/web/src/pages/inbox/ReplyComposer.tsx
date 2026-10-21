@@ -6,7 +6,7 @@ import { useToast } from '../../components/Toast';
 import { Alert, Badge, Button, Dropdown, Modal, Textarea } from '../../components/ui';
 import { IconChevronDown } from '../../components/icons';
 import { useMeta } from '../../lib/meta';
-import { KNOWLEDGE_CATEGORY_LABELS } from '../../../../shared/constants';
+import { DM_TODO_LABELS, KNOWLEDGE_CATEGORY_LABELS, detectDmTodo } from '../../../../shared/constants';
 import type { CannedReply, CommentDetail, ReplyCheckResult, ReplyInput, ReplyWarning, SuggestionSet, SuggestionsResponse, SuggestionVariant } from '../../../../shared/types';
 
 interface Props {
@@ -286,6 +286,7 @@ export function ReplyComposer({ commentId, brandId, categoryKey, authorName, dis
       )}
       <div className="reply-actions">
         <span className="muted small">{body.length} / 2000</span>
+        {detectDmTodo(body) && <span className="small" title="送出後這則留言會出現在收件匣「私訊待辦」分頁">✉ 送出後加入私訊待辦（{DM_TODO_LABELS[detectDmTodo(body)!]}）</span>}
         <span className="spacer" />
         <Button size="sm" disabled={disabled || empty || blocked} loading={sending} onClick={() => void send('waiting')} title="已回覆但還需要對方回應（例如請對方私訊訂單編號）">
           送出，等待對方回應

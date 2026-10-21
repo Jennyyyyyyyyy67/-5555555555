@@ -112,7 +112,28 @@ describe('留言處理', () => {
     expect(done.body.comment.completedAt).not.toBeNull();
   });
 
-  it('沒回覆過不能標示等待對方', async () => {
+  it('回覆說「已私訊」會加入私訊待辦，完成後離開分頁；結案也不影響待辦', async () => {
+    const ctx = await createTestContext();
+    const op = await ctx.loginAs('opA');
+    const res = await op.post(`/api/comments/${ctx.fx.commentA}/reply`).send({ body: '已經私訊您了，請查收～', statusAfter: 'done' });
+    expect(res.body.comment).toMatchObject({ status: 'done', dmTodo: 'send', dmDoneAt: null });
+    const list = await op.get('/api/comments?tab=dm');
+    expect(list.body.items.map((i: { id: number }) => i.id)).toEqual([ctx.fx.commentA]);
+    expect(list.body.tabCounts.dm).toBe(1);
+
+    const done = await op.post(`/api/comments/${ctx.fx.commentA}/dm`).send({ done: true });
+    expect(done.body.comment.dmDoneAt).not.toBeNull();
+    expect((await op.get('/api/comments?tab=dm')).body.tabCounts.dm).toBe(0);
+    expect(await get(ctx.db, "SELECT id FROM audit_logs WHERE action = 'comment.dm_done'")).toBeTruthy();
+
+    // 沒提到私訊的回覆不會加入；沒有待辦時不能標示完成
+    const other = await addComment(ctx, 'A', 'dm-none');
+    const plain = await op.post(`/api/comments/${other}/reply`).send({ body: '謝謝支持！', statusAfter: 'done' });
+    expect(plain.body.comment.dmTodo).toBeNull();
+    expect((await op.post(`/api/comments/${other}/dm`).send({ done: true })).status).toBe(400);
+  });
+
+    it('沒回覆過不能標示等待對方', async () => {
     const ctx = await createTestContext();
     const op = await ctx.loginAs('opA');
     expect((await op.post(`/api/comments/${ctx.fx.commentA}/status`).send({ status: 'waiting' })).status).toBe(400);

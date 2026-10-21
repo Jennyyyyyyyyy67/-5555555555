@@ -1,4 +1,5 @@
 // 留言處理流程：收到留言 → AI 判斷 → 啟動時效 → 安全檢查 → 自動化規則 → 自動回覆或交給人工 → 留下紀錄。
+import { DM_TODO_LABELS, detectDmTodo } from '../../shared/constants';
 import type { DB } from '../db';
 import { all, get, insert, parseJson, run, tx, updateById } from '../db';
 import { addMinutes, nowIso } from '../lib/clock';
@@ -605,7 +606,9 @@ async function sendAutoReply(db: DB, ctx: Context, externalId: string, result: P
       sent_at: sentAt,
       created_at: sentAt,
     });
+    const dm = detectDmTodo(result.replyBody ?? '');
     await updateById(db, 'comments', commentId, {
+      ...(dm ? { dm_todo: dm, dm_todo_at: sentAt } : {}),
       status: 'done',
       is_auto_handled: true,
       handling_mode: 'ai_auto',
@@ -622,7 +625,7 @@ async function sendAutoReply(db: DB, ctx: Context, externalId: string, result: P
       action: 'comment.auto_reply',
       targetType: 'comment',
       targetId: commentId,
-      summary: `自動化規則「${rule.ruleName}」自動回覆`,
+      summary: `自動化規則「${rule.ruleName}」自動回覆${dm ? `，加入私訊待辦（${DM_TODO_LABELS[dm]}）` : ''}`,
       after: { status: 'done' },
       detail: { replyId, body: result.replyBody, confidence: result.analysis.confidence },
       createdAt: sentAt,

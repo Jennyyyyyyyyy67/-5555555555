@@ -6,7 +6,7 @@ import type { AuthUser } from '../auth/session';
 import { addMinutes, nowIso } from '../lib/clock';
 import { audit } from './audit';
 import { conflict, notFound } from '../lib/errors';
-import { LOCK_TTL_MINUTES, type CommentStatus } from '../../shared/constants';
+import { LOCK_TTL_MINUTES, type CommentStatus, type DmTodo } from '../../shared/constants';
 
 export interface CommentRow {
   id: number;
@@ -31,6 +31,8 @@ export interface CommentRow {
   completed_at: string | null;
   follow_up_at: string | null;
   follow_up_note: string;
+  dm_todo: DmTodo | null;
+  dm_done_at: string | null;
 }
 
 /** 取得留言；不存在或不在使用者可存取（且啟用中）的品牌 → 404 */

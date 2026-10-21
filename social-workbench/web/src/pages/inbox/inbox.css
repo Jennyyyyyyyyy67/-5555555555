@@ -321,6 +321,29 @@
   background: var(--success-weak);
   color: var(--success-text);
 }
+.dm-banner {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  padding: 10px 14px;
+  margin-bottom: 12px;
+  border-radius: 8px;
+  font-size: 13px;
+  background: var(--warning-weak);
+  color: var(--warning-text);
+}
+.dm-banner > span:first-child {
+  flex: 1 1 240px;
+}
+.dm-banner.send {
+  background: var(--danger-weak);
+  color: var(--danger-text);
+}
+.dm-banner.done {
+  background: var(--success-weak);
+  color: var(--success-text);
+}
 .lock-banner.idle {
   background: var(--surface);
 }

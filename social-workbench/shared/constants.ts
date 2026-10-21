@@ -292,3 +292,22 @@ export const DEFAULT_NEAR_DUE_MINUTES = 15;
 export const LOCK_TTL_MINUTES = 10;
 /** 密碼最短長度（前端表單與後端驗證共用） */
 export const PASSWORD_MIN_LENGTH = 8;
+
+// ---------- 私訊待辦 ----------
+/** send：回覆說「已私訊／會私訊」客人，小編要主動私訊；await：請客人私訊我們，小編要留意私訊匣 */
+export const DM_TODOS = ['send', 'await'] as const;
+export type DmTodo = (typeof DM_TODOS)[number];
+export const DM_TODO_LABELS: Record<DmTodo, string> = {
+  send: '要私訊客人',
+  await: '等客人私訊',
+};
+
+const DM_SEND = /(已|已經|已在|已經在|也在|正在|會|將|稍後|馬上|立即|立刻|隨後|晚點|等等)\s*(再)?\s*(用|透過|以)?\s*私訊(?!(我們|小編|粉專|本店|官方|給我們))|私訊(給|跟|與)?(您|你)(?!的)/;
+const DM_AWAIT = /私訊(給)?(我們|小編|粉專|本店|官方)|(歡迎|請|麻煩|可以|方便|再麻煩)\s*(您|你)?\s*(在|透過|用)?\s*私訊/;
+
+/** 從品牌回覆內容判斷需不需要私訊跟進；不需要回傳 null */
+export function detectDmTodo(replyBody: string): DmTodo | null {
+  if (DM_SEND.test(replyBody)) return 'send';
+  if (DM_AWAIT.test(replyBody)) return 'await';
+  return null;
+}

@@ -31,8 +31,11 @@ import {
   HIGH_RISK_ACTIONS,
   INTERACTION_ACTIONS,
   INTERACTION_ACTION_LABELS,
+  DM_TODO_LABELS,
   PRIORITIES,
   STATUS_LABELS,
+  detectDmTodo,
+  type DmTodo,
   type CommentStatus,
   type InteractionAction,
 } from '../../shared/constants';
@@ -61,6 +64,7 @@ const TAB_WHERE: Record<InboxTab, string> = {
   unassigned: `c.assignee_id IS NULL AND c.status IN ${OPEN_TODO}`,
   waiting: "c.status = 'waiting'",
   follow_up: "c.follow_up_at IS NOT NULL AND c.status NOT IN ('done','no_action')",
+  dm: 'c.dm_todo IS NOT NULL AND c.dm_done_at IS NULL',
   closed: "c.status IN ('done','no_action')",
   all: 'TRUE',
 };
@@ -76,6 +80,7 @@ const ITEM_SELECT = `
     c.locked_by_id, lu.name AS locked_by_name, c.lock_expires_at,
     c.sla_minutes, c.sla_due_at, c.first_response_at, c.completed_at, c.visibility,
     c.is_auto_handled, c.needs_human, c.is_liked, c.like_count, c.follow_up_at, c.follow_up_note,
+    c.dm_todo, c.dm_todo_at, c.dm_done_at,
     (SELECT COUNT(*) FROM replies r WHERE r.comment_id = c.id) AS reply_count,
     (SELECT COUNT(*) FROM comments t WHERE t.id <> c.id AND (t.id = COALESCE(c.thread_root_id, c.id) OR t.thread_root_id = COALESCE(c.thread_root_id, c.id))) AS thread_count
   FROM comments c
@@ -142,6 +147,9 @@ function toItem(r: ItemRow, now: string): InboxItem {
     lockExpiresAt: locked ? r.lock_expires_at : null,
     followUpAt: r.follow_up_at as string | null,
     followUpNote: (r.follow_up_note as string) ?? '',
+    dmTodo: (r.dm_todo as DmTodo | null) ?? null,
+    dmTodoAt: r.dm_todo_at as string | null,
+    dmDoneAt: r.dm_done_at as string | null,
     replyCount: r.reply_count as number,
     threadCount: r.thread_count as number,
   };
@@ -452,7 +460,9 @@ export async function deliverReply(db: DB, user: AuthUser, scope: BrandScope, co
     });
     const slaRow = await get<{ sla_due_at: string | null }>(db, 'SELECT sla_due_at FROM comments WHERE id = ?', [c.id]);
     const first = !fresh.first_response_at;
+    const dm = detectDmTodo(input.body);
     await updateById(db, 'comments', c.id, {
+      ...(dm ? { dm_todo: dm, dm_todo_at: now, dm_done_at: null, dm_done_by_id: null } : {}),
       status: input.statusAfter,
       handled_by_id: user.id,
       first_response_at: first ? now : undefined,
@@ -475,7 +485,7 @@ export async function deliverReply(db: DB, user: AuthUser, scope: BrandScope, co
       targetType: 'comment',
       targetId: c.id,
       assigneeIdAtTime: fresh.assignee_id ?? user.id,
-      summary: `${user.name} ${input.batch ? `批次（${input.batch.size} 則）` : ''}${suggestion ? (edited ? '修改 AI 建議後' : '採用 AI 建議') : input.cannedReplyId ? '使用標準回覆' : ''}回覆留言，狀態改為「${STATUS_LABELS[input.statusAfter]}」${warnings.length ? `（已確認 ${warnings.length} 項提醒）` : ''}`,
+      summary: `${user.name} ${input.batch ? `批次（${input.batch.size} 則）` : ''}${suggestion ? (edited ? '修改 AI 建議後' : '採用 AI 建議') : input.cannedReplyId ? '使用標準回覆' : ''}回覆留言，狀態改為「${STATUS_LABELS[input.statusAfter]}」${dm ? `，加入私訊待辦（${DM_TODO_LABELS[dm]}）` : ''}${warnings.length ? `（已確認 ${warnings.length} 項提醒）` : ''}`,
       before: { status: fresh.status },
       after: { status: input.statusAfter },
       detail: {
@@ -484,6 +494,7 @@ export async function deliverReply(db: DB, user: AuthUser, scope: BrandScope, co
         firstResponse: first,
         slaMet: first && slaRow?.sla_due_at ? now <= slaRow.sla_due_at : null,
         source,
+        dmTodo: dm ?? undefined,
         suggestionId: suggestion?.id ?? null,
         confirmedWarnings: warnings.length ? warnings.map((w) => w.message) : undefined,
         batchId: input.batch?.id,
@@ -880,6 +891,33 @@ export function inboxRoutes(): Router {
         summary: input.at ? `${user.name} 設定稍後追蹤${input.note ? `：${input.note}` : ''}` : `${user.name} 取消稍後追蹤`,
         before: { followUpAt: c.follow_up_at },
         after: { followUpAt: input.at },
+      });
+    });
+    res.json(await buildDetail(db, user, scope, Number(req.params.id)));
+  });
+
+  // ---------- 私訊待辦 ----------
+  r.post('/:id/dm', async (req: Request, res: Response) => {
+    const { user, scope } = authed(req);
+    const input = z.object({ done: z.boolean() }).parse(req.body);
+    const db = req.db;
+    await tx(db, async () => {
+      const c = await loadComment(db, scope, Number(req.params.id));
+      if (!c.dm_todo) throw badRequest('這則留言沒有私訊待辦');
+      const now = nowIso();
+      await updateById(db, 'comments', c.id, { dm_done_at: input.done ? now : null, dm_done_by_id: input.done ? user.id : null, updated_at: now });
+      await audit(db, {
+        actorType: 'user',
+        actorUserId: user.id,
+        brandId: c.brand_id,
+        commentId: c.id,
+        action: input.done ? 'comment.dm_done' : 'comment.dm_reopen',
+        targetType: 'comment',
+        targetId: c.id,
+        assigneeIdAtTime: c.assignee_id,
+        summary: input.done ? `${user.name} 完成私訊待辦（${DM_TODO_LABELS[c.dm_todo]}）` : `${user.name} 把私訊待辦改回未完成`,
+        before: { dmDoneAt: c.dm_done_at },
+        after: { dmDoneAt: input.done ? now : null },
       });
     });
     res.json(await buildDetail(db, user, scope, Number(req.params.id)));

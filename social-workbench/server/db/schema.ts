@@ -226,6 +226,11 @@ CREATE TABLE IF NOT EXISTS comments (
   -- 稍後追蹤
   follow_up_at TEXT,
   follow_up_note TEXT NOT NULL DEFAULT '',
+  -- 私訊待辦：回覆裡說「已私訊您」(send) 或「請私訊我們」(await) 時提醒小編到平台私訊
+  dm_todo TEXT CHECK (dm_todo IS NULL OR dm_todo IN ('send','await')),
+  dm_todo_at TEXT,
+  dm_done_at TEXT,
+  dm_done_by_id INTEGER REFERENCES users(id),
   group_id INTEGER REFERENCES comment_groups(id),
   visibility TEXT NOT NULL DEFAULT 'visible' CHECK (visibility IN ('visible','hidden','deleted')),
   is_liked INTEGER NOT NULL DEFAULT 0,
@@ -239,6 +244,11 @@ CREATE INDEX IF NOT EXISTS idx_comments_assignee ON comments(assignee_id);
 CREATE INDEX IF NOT EXISTS idx_comments_post ON comments(post_id);
 CREATE INDEX IF NOT EXISTS idx_comments_thread ON comments(thread_root_id);
 CREATE INDEX IF NOT EXISTS idx_comments_occurred ON comments(occurred_at);
+-- 既有資料庫補上後來新增的欄位
+ALTER TABLE comments ADD COLUMN IF NOT EXISTS dm_todo TEXT CHECK (dm_todo IS NULL OR dm_todo IN ('send','await'));
+ALTER TABLE comments ADD COLUMN IF NOT EXISTS dm_todo_at TEXT;
+ALTER TABLE comments ADD COLUMN IF NOT EXISTS dm_done_at TEXT;
+ALTER TABLE comments ADD COLUMN IF NOT EXISTS dm_done_by_id INTEGER REFERENCES users(id);
 
 -- 轉交／指派紀錄（保留原負責人與每次轉交）
 CREATE TABLE IF NOT EXISTS assignments (

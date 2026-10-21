@@ -63,9 +63,8 @@
 }
 .inbox-tabs {
   display: flex;
+  flex-wrap: wrap;
   gap: 2px;
-  overflow-x: auto;
-  scrollbar-width: none;
   margin: 0 -4px;
 }
 .inbox-tab {
